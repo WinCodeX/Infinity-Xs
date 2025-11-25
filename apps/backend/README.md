@@ -913,9 +913,1142 @@ export interface JWTPayload {
 - **Type Safety**: TypeScript checks if you're using correct data types
 - **Optional Properties**: Properties with `?` can be undefined
 
+### 4. User Model
+
+**File**: `src/models/User.model.ts`
+
+```typescript
+// src/models/User.model.ts
+
+/**
+ * User Model
+ * 
+ * Defines the User schema for MongoDB and includes methods for:
+ * - Password hashing
+ * - Password comparison
+ * - JWT token generation
+ */
+
+import mongoose, { Schema, Model } from 'mongoose';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { IUser, UserRole, JWTPayload } from '../types';
+
+/**
+ * User Schema Definition
+ * 
+ * Schema defines the structure of documents in the 'users' collection
+ */
+const UserSchema = new Schema<IUser>(
+  {
+    // Email - required and unique
+    email: {
+      type: String,
+      required: [true, 'Email is required'],
+      unique: true, // No two users can have the same email
+      lowercase: true, // Always store in lowercase
+      trim: true, // Remove whitespace
+      match: [
+        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+        'Please provide a valid email',
+      ],
+    },
+
+    // Password - optional for OAuth users
+    password: {
+      type: String,
+      minlength: [6, 'Password must be at least 6 characters'],
+      select: false, // Don't include password in queries by default
+    },
+
+    // Full name
+    name: {
+      type: String,
+      required: [true, 'Name is required'],
+      trim: true,
+      maxlength: [50, 'Name cannot exceed 50 characters'],
+    },
+
+    // User role - determines permissions
+    role: {
+      type: String,
+      enum: Object.values(UserRole), // Only allow defined roles
+      default: UserRole.CUSTOMER,
+    },
+
+    // Google OAuth ID
+    googleId: {
+      type: String,
+      unique: true, // Each Google account maps to one user
+      sparse: true, // Allow multiple null values (for non-OAuth users)
+    },
+
+    // Profile picture URL
+    avatar: {
+      type: String,
+      default: '', // Can store R2 URL or Google profile picture
+    },
+
+    // Phone number
+    phone: {
+      type: String,
+      match: [/^[0-9]{10,15}$/, 'Please provide a valid phone number'],
+    },
+
+    // Address object
+    address: {
+      street: { type: String },
+      city: { type: String },
+      state: { type: String },
+      zipCode: { type: String },
+      country: { type: String, default: 'Kenya' },
+    },
+
+    // Email verification status
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    // Automatically add createdAt and updatedAt timestamps
+    timestamps: true,
+  }
+);
+
+/**
+ * Pre-save Middleware
+ * 
+ * This runs BEFORE a document is saved to the database
+ * We use it to hash passwords before storing them
+ * 
+ * NOTE: Arrow functions don't work here because we need 'this' context
+ */
+UserSchema.pre('save', async function (next) {
+  // Only hash the password if it's new or modified
+  if (!this.isModified('password')) {
+    return next();
+  }
+
+  // If password exists (not OAuth user)
+  if (this.password) {
+    try {
+      // Generate salt (random data added to password before hashing)
+      // 10 is the cost factor - higher = more secure but slower
+      const salt = await bcrypt.genSalt(10);
+
+      // Hash the password with the salt
+      this.password = await bcrypt.hash(this.password, salt);
+
+      next();
+    } catch (error) {
+      next(error as Error);
+    }
+  } else {
+    next();
+  }
+});
+
+/**
+ * Instance Method: Compare Password
+ * 
+ * Checks if provided password matches hashed password in database
+ * Used during login
+ * 
+ * @param candidatePassword - Plain text password from login form
+ * @returns Boolean - true if passwords match
+ */
+UserSchema.methods.comparePassword = async function (
+  candidatePassword: string
+): Promise<boolean> {
+  try {
+    // If user doesn't have a password (OAuth user), return false
+    if (!this.password) {
+      return false;
+    }
+
+    // bcrypt.compare() hashes candidatePassword and compares with stored hash
+    return await bcrypt.compare(candidatePassword, this.password);
+  } catch (error) {
+    return false;
+  }
+};
+
+/**
+ * Instance Method: Generate Auth Token
+ * 
+ * Creates a JWT token for authenticated sessions
+ * Token contains user ID, email, and role
+ * 
+ * @returns JWT token string
+ */
+UserSchema.methods.generateAuthToken = function (): string {
+  // Payload - data embedded in the token
+  const payload: JWTPayload = {
+    userId: this._id.toString(),
+    email: this.email,
+    role: this.role,
+  };
+
+  // Get JWT secret from environment variables
+  const secret = process.env.JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('JWT_SECRET is not defined');
+  }
+
+  // Sign the token with secret and set expiration
+  // jwt.sign() creates the token
+  const token = jwt.sign(
+    payload,
+    secret,
+    {
+      expiresIn: process.env.JWT_EXPIRE || '7d', // Token valid for 7 days
+    }
+  );
+
+  return token;
+};
+
+/**
+ * Create and export the User model
+ * 
+ * Model is a class with which we construct documents
+ * mongoose.model() takes collection name and schema
+ */
+const User: Model<IUser> = mongoose.model<IUser>('User', UserSchema);
+
+export default User;
+```
+
+**Key Concepts Explained:**
+
+1. **Schema**: Blueprint for how data is structured in MongoDB
+2. **Pre-save Middleware**: Runs automatically before saving to database
+3. **Password Hashing**: 
+   - Plain password: `"mypassword123"`
+   - Salt: Random data added for security
+   - Hashed: `"$2a$10$N9qo8uLO..."`
+   - Cannot be reversed (one-way function)
+4. **Instance Methods**: Functions available on each user document
+5. **JWT (JSON Web Token)**: 
+   - Encoded string containing user data
+   - Used for authentication
+   - Format: `header.payload.signature`
+
+**Why Hash Passwords?**
+If database is compromised, attackers can't see actual passwords. Even if two users have the same password, hashes will be different due to salt.
+
 ---
 
-## 🧪 Testing the Setup
+### 5. Product Model
+
+**File**: `src/models/Product.model.ts`
+
+```typescript
+// src/models/Product.model.ts
+
+/**
+ * Product Model
+ * 
+ * Handles both physical products (clothes) and services (web development)
+ * Flexible schema allows for different product types with optional fields
+ */
+
+import mongoose, { Schema, Model } from 'mongoose';
+import { IProduct, ProductCategory, ServiceType } from '../types';
+
+/**
+ * Product Schema Definition
+ */
+const ProductSchema = new Schema<IProduct>(
+  {
+    // Product name
+    name: {
+      type: String,
+      required: [true, 'Product name is required'],
+      trim: true,
+      maxlength: [100, 'Name cannot exceed 100 characters'],
+    },
+
+    // Detailed description
+    description: {
+      type: String,
+      required: [true, 'Description is required'],
+      maxlength: [2000, 'Description cannot exceed 2000 characters'],
+    },
+
+    // Category: clads, services, etc.
+    category: {
+      type: String,
+      enum: Object.values(ProductCategory),
+      required: [true, 'Category is required'],
+    },
+
+    // Service type - only for service category
+    serviceType: {
+      type: String,
+      enum: Object.values(ServiceType),
+      required: function (this: IProduct) {
+        // Make required only if category is 'services'
+        return this.category === ProductCategory.SERVICES;
+      },
+    },
+
+    // Price in KES (Kenyan Shillings)
+    price: {
+      type: Number,
+      required: [true, 'Price is required'],
+      min: [0, 'Price cannot be negative'],
+    },
+
+    // Array of image URLs from Cloudflare R2
+    images: {
+      type: [String],
+      required: [true, 'At least one image is required'],
+      validate: {
+        validator: function (v: string[]) {
+          return v.length > 0 && v.length <= 10; // Max 10 images
+        },
+        message: 'Product must have between 1 and 10 images',
+      },
+    },
+
+    // Inventory count
+    // Use -1 for unlimited (services don't have stock limits)
+    stock: {
+      type: Number,
+      required: [true, 'Stock count is required'],
+      default: 0,
+      min: [-1, 'Invalid stock value'],
+    },
+
+    // Available sizes - for clothing
+    sizes: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: function (this: IProduct, v: string[]) {
+          // Sizes required for clothing, optional for services
+          if (this.category === ProductCategory.CLADS) {
+            return v.length > 0;
+          }
+          return true;
+        },
+        message: 'Sizes are required for clothing items',
+      },
+    },
+
+    // Available colors - for clothing
+    colors: {
+      type: [String],
+      default: [],
+    },
+
+    // Active status - can disable without deleting
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+
+    // Featured status - show on homepage/top of lists
+    featured: {
+      type: Boolean,
+      default: false,
+    },
+
+    // Flexible metadata field for additional properties
+    metadata: {
+      type: Schema.Types.Mixed, // Allows any structure
+      default: {},
+    },
+
+    // Reference to user who created this product
+    // Populated with staff/admin user data when queried
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User', // Reference to User model
+      required: true,
+    },
+  },
+  {
+    timestamps: true, // Auto-add createdAt and updatedAt
+  }
+);
+
+/**
+ * Indexes for Performance
+ * 
+ * Indexes speed up queries on specific fields
+ * We create indexes on fields we frequently search/filter by
+ */
+
+// Index for text search on name and description
+ProductSchema.index({ name: 'text', description: 'text' });
+
+// Index for filtering by category
+ProductSchema.index({ category: 1 });
+
+// Index for filtering active products
+ProductSchema.index({ isActive: 1 });
+
+// Compound index for category + active status + featured
+// Useful for queries like "get all active featured clads"
+ProductSchema.index({ category: 1, isActive: 1, featured: -1 });
+
+// Index for price range queries
+ProductSchema.index({ price: 1 });
+
+/**
+ * Virtual Property: Is In Stock
+ * 
+ * Virtual properties are fields that don't exist in the database
+ * but are computed from other fields
+ * 
+ * This checks if product is available for purchase
+ */
+ProductSchema.virtual('isInStock').get(function (this: IProduct) {
+  // Services (stock: -1) are always in stock
+  if (this.stock === -1) {
+    return true;
+  }
+  // Physical products must have stock > 0
+  return this.stock > 0;
+});
+
+/**
+ * Virtual Property: Discount Price
+ * 
+ * If metadata has discount percentage, calculate discounted price
+ */
+ProductSchema.virtual('discountPrice').get(function (this: IProduct) {
+  if (this.metadata?.discount) {
+    const discountPercent = this.metadata.discount;
+    return this.price - (this.price * discountPercent) / 100;
+  }
+  return this.price;
+});
+
+/**
+ * Instance Method: Decrease Stock
+ * 
+ * Reduces stock count when an order is placed
+ * Validates that enough stock is available
+ * 
+ * @param quantity - Amount to decrease stock by
+ * @returns Boolean - success status
+ */
+ProductSchema.methods.decreaseStock = async function (
+  this: IProduct,
+  quantity: number
+): Promise<boolean> {
+  // Don't decrease stock for services (unlimited)
+  if (this.stock === -1) {
+    return true;
+  }
+
+  // Check if enough stock is available
+  if (this.stock < quantity) {
+    return false;
+  }
+
+  // Decrease stock and save
+  this.stock -= quantity;
+  await this.save();
+  return true;
+};
+
+/**
+ * Instance Method: Increase Stock
+ * 
+ * Used when restocking or when orders are cancelled
+ * 
+ * @param quantity - Amount to increase stock by
+ */
+ProductSchema.methods.increaseStock = async function (
+  this: IProduct,
+  quantity: number
+): Promise<void> {
+  // Don't modify stock for services
+  if (this.stock === -1) {
+    return;
+  }
+
+  this.stock += quantity;
+  await this.save();
+};
+
+/**
+ * Static Method: Get Featured Products
+ * 
+ * Static methods are called on the Model, not instances
+ * Retrieves all featured products for homepage display
+ * 
+ * @param limit - Maximum number of products to return
+ * @returns Array of featured products
+ */
+ProductSchema.statics.getFeaturedProducts = async function (
+  limit: number = 10
+): Promise<IProduct[]> {
+  return this.find({ featured: true, isActive: true })
+    .limit(limit)
+    .populate('createdBy', 'name email') // Include creator info
+    .sort({ createdAt: -1 }); // Newest first
+};
+
+/**
+ * Pre-save Middleware
+ * 
+ * Validates business rules before saving
+ */
+ProductSchema.pre('save', function (next) {
+  // Services should have stock set to -1 (unlimited)
+  if (this.category === ProductCategory.SERVICES && this.stock !== -1) {
+    this.stock = -1;
+  }
+
+  next();
+});
+
+/**
+ * Configure toJSON to include virtuals
+ * 
+ * When we convert a document to JSON (res.json(product)),
+ * include virtual properties
+ */
+ProductSchema.set('toJSON', { virtuals: true });
+ProductSchema.set('toObject', { virtuals: true });
+
+/**
+ * Create and export the Product model
+ */
+const Product: Model<IProduct> = mongoose.model<IProduct>(
+  'Product',
+  ProductSchema
+);
+
+export default Product;
+```
+
+**Key Concepts:**
+
+1. **Indexes**: 
+   - Like a book's index - helps find data quickly
+   - `{ category: 1 }` means ascending order index
+   - Without indexes, MongoDB scans every document (slow)
+
+2. **Virtual Properties**: 
+   - Calculated fields not stored in database
+   - Example: `isInStock` computed from `stock` value
+   - Saves database space
+
+3. **Instance vs Static Methods**:
+   - Instance: Called on a document → `product.decreaseStock(5)`
+   - Static: Called on the Model → `Product.getFeaturedProducts()`
+
+4. **Population**:
+   - Replacing references with actual data
+   - `createdBy: ObjectId("123")` → `createdBy: { name: "John", email: "..." }`
+
+---
+
+### 6. Cart Model
+
+**File**: `src/models/Cart.model.ts`
+
+```typescript
+// src/models/Cart.model.ts
+
+/**
+ * Cart Model
+ * 
+ * Manages shopping cart functionality
+ * Each user has one cart that persists across sessions
+ */
+
+import mongoose, { Schema, Model } from 'mongoose';
+import { ICart, ICartItem } from '../types';
+
+/**
+ * Cart Item Sub-Schema
+ * 
+ * Defines structure of individual items in the cart
+ * This is embedded within the Cart schema
+ */
+const CartItemSchema = new Schema<ICartItem>(
+  {
+    // Reference to the product
+    product: {
+      type: Schema.Types.ObjectId,
+      ref: 'Product', // Links to Product model
+      required: true,
+    },
+
+    // Quantity of this item
+    quantity: {
+      type: Number,
+      required: true,
+      min: [1, 'Quantity must be at least 1'],
+      default: 1,
+    },
+
+    // Selected size (for clothing)
+    size: {
+      type: String,
+    },
+
+    // Selected color (for clothing)
+    color: {
+      type: String,
+    },
+
+    // Price at time of adding to cart
+    // Important: Store price to handle price changes
+    // If product price changes later, cart price remains consistent
+    price: {
+      type: Number,
+      required: true,
+      min: [0, 'Price cannot be negative'],
+    },
+  },
+  {
+    _id: false, // Don't create _id for sub-documents
+  }
+);
+
+/**
+ * Cart Schema Definition
+ */
+const CartSchema = new Schema<ICart>(
+  {
+    // Reference to the user who owns this cart
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      unique: true, // Each user can have only one cart
+    },
+
+    // Array of cart items
+    items: {
+      type: [CartItemSchema],
+      default: [],
+    },
+
+    // Total amount calculated from all items
+    totalAmount: {
+      type: Number,
+      default: 0,
+      min: [0, 'Total amount cannot be negative'],
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+/**
+ * Index for quick cart lookup by user
+ */
+CartSchema.index({ user: 1 });
+
+/**
+ * Pre-save Middleware: Calculate Total Amount
+ * 
+ * Automatically recalculates totalAmount before saving
+ * This ensures totalAmount always matches the sum of items
+ */
+CartSchema.pre('save', function (next) {
+  // Calculate total by summing (price * quantity) for each item
+  this.totalAmount = this.items.reduce((total, item) => {
+    return total + item.price * item.quantity;
+  }, 0);
+
+  next();
+});
+
+/**
+ * Instance Method: Add Item to Cart
+ * 
+ * Adds a product to the cart or increases quantity if already exists
+ * 
+ * @param productId - ID of the product to add
+ * @param quantity - Amount to add
+ * @param price - Current price of the product
+ * @param size - Selected size (optional)
+ * @param color - Selected color (optional)
+ */
+CartSchema.methods.addItem = async function (
+  this: ICart,
+  productId: string,
+  quantity: number,
+  price: number,
+  size?: string,
+  color?: string
+): Promise<void> {
+  // Check if item already exists in cart
+  // For clothing, must match product, size, AND color
+  const existingItemIndex = this.items.findIndex((item) => {
+    const isSameProduct = item.product.toString() === productId;
+    const isSameSize = size ? item.size === size : !item.size;
+    const isSameColor = color ? item.color === color : !item.color;
+    return isSameProduct && isSameSize && isSameColor;
+  });
+
+  if (existingItemIndex > -1) {
+    // Item exists - increase quantity
+    this.items[existingItemIndex].quantity += quantity;
+  } else {
+    // Item doesn't exist - add new item
+    this.items.push({
+      product: productId as any, // Cast to avoid TypeScript error
+      quantity,
+      price,
+      size,
+      color,
+    });
+  }
+
+  // Save will trigger pre-save middleware to recalculate total
+  await this.save();
+};
+
+/**
+ * Instance Method: Remove Item from Cart
+ * 
+ * Removes an item completely from the cart
+ * 
+ * @param productId - ID of the product to remove
+ * @param size - Size of the item (for clothing)
+ * @param color - Color of the item (for clothing)
+ */
+CartSchema.methods.removeItem = async function (
+  this: ICart,
+  productId: string,
+  size?: string,
+  color?: string
+): Promise<void> {
+  // Filter out the matching item
+  this.items = this.items.filter((item) => {
+    const isSameProduct = item.product.toString() === productId;
+    const isSameSize = size ? item.size === size : !item.size;
+    const isSameColor = color ? item.color === color : !item.color;
+    
+    // Keep item if it doesn't match (inverse logic)
+    return !(isSameProduct && isSameSize && isSameColor);
+  });
+
+  await this.save();
+};
+
+/**
+ * Instance Method: Update Item Quantity
+ * 
+ * Changes the quantity of a specific item
+ * 
+ * @param productId - ID of the product
+ * @param quantity - New quantity
+ * @param size - Size (for clothing)
+ * @param color - Color (for clothing)
+ */
+CartSchema.methods.updateQuantity = async function (
+  this: ICart,
+  productId: string,
+  quantity: number,
+  size?: string,
+  color?: string
+): Promise<boolean> {
+  // Find the item
+  const item = this.items.find((item) => {
+    const isSameProduct = item.product.toString() === productId;
+    const isSameSize = size ? item.size === size : !item.size;
+    const isSameColor = color ? item.color === color : !item.color;
+    return isSameProduct && isSameSize && isSameColor;
+  });
+
+  if (!item) {
+    return false; // Item not found
+  }
+
+  if (quantity <= 0) {
+    // If quantity is 0 or negative, remove the item
+    await this.removeItem(productId, size, color);
+  } else {
+    // Update quantity
+    item.quantity = quantity;
+    await this.save();
+  }
+
+  return true;
+};
+
+/**
+ * Instance Method: Clear Cart
+ * 
+ * Removes all items from cart (used after order is placed)
+ */
+CartSchema.methods.clearCart = async function (this: ICart): Promise<void> {
+  this.items = [];
+  this.totalAmount = 0;
+  await this.save();
+};
+
+/**
+ * Instance Method: Get Item Count
+ * 
+ * Returns total number of individual items in cart
+ */
+CartSchema.methods.getItemCount = function (this: ICart): number {
+  return this.items.reduce((total, item) => total + item.quantity, 0);
+};
+
+/**
+ * Static Method: Get or Create Cart
+ * 
+ * Retrieves user's cart or creates a new one if it doesn't exist
+ * 
+ * @param userId - ID of the user
+ * @returns User's cart
+ */
+CartSchema.statics.getOrCreateCart = async function (
+  userId: string
+): Promise<ICart> {
+  // Try to find existing cart
+  let cart = await this.findOne({ user: userId }).populate({
+    path: 'items.product', // Populate product details for each item
+    select: 'name price images isActive stock', // Only get needed fields
+  });
+
+  // If cart doesn't exist, create new one
+  if (!cart) {
+    cart = await this.create({ user: userId, items: [] });
+  }
+
+  return cart;
+};
+
+/**
+ * Create and export the Cart model
+ */
+const Cart: Model<ICart> = mongoose.model<ICart>('Cart', CartSchema);
+
+export default Cart;
+```
+
+**Key Concepts:**
+
+1. **Embedded Documents**: 
+   - `CartItemSchema` is embedded inside `CartSchema`
+   - Alternative: Separate collection (but slower for small data)
+
+2. **Array Methods**:
+   - `findIndex()`: Find position of item in array
+   - `filter()`: Remove items that match condition
+   - `reduce()`: Sum up values (like Excel SUM function)
+
+3. **Why Store Price in Cart?**
+   ```
+   User adds item at $10 → Stored in cart
+   Next day, price changes to $15
+   User's cart still shows $10 (fair pricing)
+   ```
+
+---
+
+### 7. Order Model
+
+**File**: `src/models/Order.model.ts`
+
+```typescript
+// src/models/Order.model.ts
+
+/**
+ * Order Model
+ * 
+ * Represents completed purchases
+ * Orders are created when payment is confirmed
+ */
+
+import mongoose, { Schema, Model } from 'mongoose';
+import { IOrder, OrderStatus, PaymentMethod, ICartItem } from '../types';
+
+/**
+ * Order Schema Definition
+ */
+const OrderSchema = new Schema<IOrder>(
+  {
+    // Unique order identifier
+    // Format: INF-2024-00001
+    orderNumber: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+
+    // Reference to the customer
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+
+    // Items purchased (snapshot from cart at time of order)
+    // We store items directly instead of referencing cart
+    // because cart contents can change after order is placed
+    items: {
+      type: [
+        {
+          product: {
+            type: Schema.Types.ObjectId,
+            ref: 'Product',
+            required: true,
+          },
+          quantity: {
+            type: Number,
+            required: true,
+            min: 1,
+          },
+          size: String,
+          color: String,
+          price: {
+            type: Number,
+            required: true,
+            min: 0,
+          },
+        },
+      ],
+      required: true,
+      validate: {
+        validator: function (v: ICartItem[]) {
+          return v.length > 0; // Must have at least one item
+        },
+        message: 'Order must contain at least one item',
+      },
+    },
+
+    // Total amount paid
+    totalAmount: {
+      type: Number,
+      required: true,
+      min: [0, 'Total amount cannot be negative'],
+    },
+
+    // Order status tracking
+    status: {
+      type: String,
+      enum: Object.values(OrderStatus),
+      default: OrderStatus.PENDING,
+    },
+
+    // Payment method used
+    paymentMethod: {
+      type: String,
+      enum: Object.values(PaymentMethod),
+      required: true,
+    },
+
+    // Payment confirmation status
+    paymentStatus: {
+      type: String,
+      enum: ['pending', 'completed', 'failed'],
+      default: 'pending',
+    },
+
+    // Transaction ID from payment provider (M-Pesa, Stripe, etc.)
+    transactionId: {
+      type: String,
+    },
+
+    // Shipping/delivery address
+    shippingAddress: {
+      name: {
+        type: String,
+        required: true,
+      },
+      phone: {
+        type: String,
+        required: true,
+      },
+      street: {
+        type: String,
+        required: true,
+      },
+      city: {
+        type: String,
+        required: true,
+      },
+      state: {
+        type: String,
+        required: true,
+      },
+      zipCode: {
+        type: String,
+        required: true,
+      },
+      country: {
+        type: String,
+        default: 'Kenya',
+      },
+    },
+
+    // Customer notes/instructions
+    notes: {
+      type: String,
+      maxlength: [500, 'Notes cannot exceed 500 characters'],
+    },
+
+    // Shipping tracking number
+    trackingNumber: {
+      type: String,
+    },
+
+    // Delivery completion date
+    deliveredAt: {
+      type: Date,
+    },
+  },
+  {
+    timestamps: true, // createdAt = order date, updatedAt = last modification
+  }
+);
+
+/**
+ * Indexes for Performance
+ */
+
+// Index for user orders lookup
+OrderSchema.index({ user: 1, createdAt: -1 });
+
+// Index for order number lookup
+OrderSchema.index({ orderNumber: 1 });
+
+// Index for status filtering
+OrderSchema.index({ status: 1 });
+
+// Index for payment status
+OrderSchema.index({ paymentStatus: 1 });
+
+// Index for transaction ID lookup
+OrderSchema.index({ transactionId: 1 });
+
+/**
+ * Pre-save Middleware: Generate Order Number
+ * 
+ * Automatically generates a unique order number
+ * Only runs when creating a new order (not on updates)
+ */
+OrderSchema.pre('save', async function (next) {
+  // Only generate order number for new documents
+  if (!this.isNew) {
+    return next();
+  }
+
+  try {
+    // Get current year
+    const year = new Date().getFullYear();
+
+    // Find the last order created this year
+    const lastOrder = await mongoose.model('Order').findOne({
+      orderNumber: new RegExp(`^INF-${year}-`),
+    })
+    .sort({ createdAt: -1 })
+    .limit(1);
+
+    let orderCount = 1;
+
+    if (lastOrder) {
+      // Extract the count from last order number
+      // Example: "INF-2024-00042" -> 42
+      const lastNumber = parseInt(lastOrder.orderNumber.split('-')[2]);
+      orderCount = lastNumber + 1;
+    }
+
+    // Generate new order number with padding
+    // Example: "INF-2024-00001"
+    this.orderNumber = `INF-${year}-${orderCount.toString().padStart(5, '0')}`;
+
+    next();
+  } catch (error) {
+    next(error as Error);
+  }
+});
+
+/**
+ * Instance Method: Update Status
+ * 
+ * Updates order status and sets deliveredAt date when delivered
+ * 
+ * @param newStatus - The new status to set
+ */
+OrderSchema.methods.updateStatus = async function (
+  this: IOrder,
+  newStatus: OrderStatus
+): Promise<void> {
+  this.status = newStatus;
+
+  // If status is delivered, record the delivery date
+  if (newStatus === OrderStatus.DELIVERED) {
+    this.deliveredAt = new Date();
+  }
+
+  await this.save();
+};
+
+/**
+ * Instance Method: Mark as Paid
+ * 
+ * Updates payment status to completed
+ * 
+ * @param transactionId - Payment transaction ID
+ */
+OrderSchema.methods.markAsPaid = async function (
+  this: IOrder,
+  transactionId: string
+): Promise<void> {
+  this.paymentStatus = 'completed';
+  this.transactionId = transactionId;
+  this.status = OrderStatus.PAID;
+  await this.save();
+};
+
+/**
+ * Instance Method: Cancel Order
+ * 
+ * Cancels the order and restores product stock
+ */
+OrderSchema.methods.cancelOrder = async function (this: IOrder): Promise<void> {
+  // Only allow cancellation for certain statuses
+  const cancellableStatuses = [
+    OrderStatus.PENDING,
+    OrderStatus.PAID,
+    OrderStatus.PROCESSING,
+  ];
+
+  if (!cancellableStatuses.includes(this.status)) {
+    throw new Error('Order cannot be cancelled at this stage');
+  }
+
+  // Restore stock for each item
+  const Product = mongoose.model('Product');
+  
+  for (const item of this.items) {
+    const product = await Product.findById(item.product);
+    if (product && product.stock !== -1) {
+      // Only restore stock for physical products
+      product.stock += item.quantity;
+      await product.save();
+    }
+  }
+
+  // Update order status
+  this.status = OrderStatus.CANCELLED;
+  await this.save();
+};
+
+/**
+ * Static Method: Get User Orders
+ * 
+ *
 
 ### Test 1: Verify Dependencies
 
