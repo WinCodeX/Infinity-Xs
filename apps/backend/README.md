@@ -1141,6 +1141,8 @@ If database is compromised, attackers can't see actual passwords. Even if two us
 
 ---
 
+---
+
 ### 5. Product Model
 
 **File**: `src/models/Product.model.ts`
