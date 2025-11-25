@@ -1,16 +1,10 @@
 // src/server.ts
 
 /**
- * Server Entry Point
+ * Server Entry Point - SIMPLIFIED WORKING VERSION
  * 
- * This is where everything starts!
- * 
- * What happens here:
- * 1. Load environment variables
- * 2. Connect to MongoDB
- * 3. Set up Express app with middleware
- * 4. Define routes
- * 5. Start listening for requests
+ * This version only includes what we have so far
+ * We'll add more routes as we build them
  */
 
 import express, { Application, Request, Response } from 'express';
@@ -18,60 +12,46 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import { connectDB } from './config/database';
-import { notFound, errorHandler } from './middleware/error.middleware';
 
-// Load environment variables from .env file
-// Must be called BEFORE using process.env
+// Load environment variables FIRST
 dotenv.config();
 
 // Connect to MongoDB
 connectDB();
 
-/**
- * Initialize Express Application
- * 
- * Express is like a waiter that handles requests and responses
- */
+// Initialize Express
 const app: Application = express();
 
 /**
- * MIDDLEWARE SETUP
- * 
- * Middleware runs BEFORE your routes
- * Think of it as security checks and data processing before entering a building
+ * MIDDLEWARE
  */
 
-// 1. Helmet - Security headers
-// Protects against common web vulnerabilities
+// Security headers
 app.use(helmet());
 
-// 2. CORS - Cross-Origin Resource Sharing
-// Allows frontend (different domain) to make requests
+// CORS - Allow frontend requests
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:3000', // Frontend URL
-    credentials: true, // Allow cookies
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    credentials: true,
   })
 );
 
-// 3. Body Parsers
-// Convert incoming request body to JSON and URL-encoded data
-app.use(express.json()); // Parse JSON bodies
-app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+// Body parsers
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 /**
  * ROUTES
- * 
- * Routes define the API endpoints
- * We'll add these as we create the route files
  */
 
-// Health check route - Test if server is running
+// Health check
 app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: 'Server is running!',
     timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
   });
 });
 
@@ -80,35 +60,42 @@ app.get('/', (req: Request, res: Response) => {
   res.json({
     message: 'Welcome to Infinity API',
     version: '1.0.0',
-    documentation: '/api/docs', // We'll add this later
+    endpoints: {
+      health: '/api/health',
+      auth: '/api/auth',
+    },
   });
 });
 
-// Import route files
+// Import auth routes
 import authRoutes from './routes/auth.routes';
-
-// Use routes
 app.use('/api/auth', authRoutes);
-// app.use('/api/products', productRoutes); // We'll add these next
-// app.use('/api/cart', cartRoutes);
-// app.use('/api/orders', orderRoutes);
 
 /**
  * ERROR HANDLING
- * 
- * These MUST come after all routes
  */
 
-// 404 Handler - Route not found
-app.use(notFound);
+// 404 Handler
+app.use((req: Request, res: Response) => {
+  res.status(404).json({
+    success: false,
+    message: `Route ${req.originalUrl} not found`,
+  });
+});
 
-// Global error handler - Catches all errors
-app.use(errorHandler);
+// Global error handler
+app.use((err: any, req: Request, res: Response, next: any) => {
+  console.error('❌ Error:', err);
+
+  res.status(err.statusCode || 500).json({
+    success: false,
+    message: err.message || 'Server Error',
+    error: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+  });
+});
 
 /**
  * START SERVER
- * 
- * Listen for incoming requests on specified port
  */
 const PORT = process.env.PORT || 5000;
 
@@ -122,25 +109,26 @@ app.listen(PORT, () => {
   ║   Port: ${PORT}                           ║
   ║   URL: http://localhost:${PORT}         ║
   ║                                        ║
+  ║   Routes:                              ║
+  ║   GET  /                               ║
+  ║   GET  /api/health                     ║
+  ║   POST /api/auth/register              ║
+  ║   POST /api/auth/login                 ║
+  ║   GET  /api/auth/me                    ║
+  ║                                        ║
   ╚════════════════════════════════════════╝
   `);
 });
 
-/**
- * GRACEFUL SHUTDOWN
- * 
- * Handle server shutdown properly
- * Closes database connections before exiting
- */
+// Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('👋 SIGTERM signal received: closing HTTP server');
+  console.log('👋 SIGTERM signal received: closing server');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('👋 SIGINT signal received: closing HTTP server');
+  console.log('👋 SIGINT signal received: closing server');
   process.exit(0);
 });
 
-// Export app for testing
 export default app;
