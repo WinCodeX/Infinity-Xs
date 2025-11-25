@@ -2,8 +2,7 @@
 
 /**
  * Server Entry Point - SIMPLIFIED WORKING VERSION
- * 
- * This version only includes what we have so far
+ * * This version only includes what we have so far
  * We'll add more routes as we build them
  */
 
@@ -11,7 +10,8 @@ import express, { Application, Request, Response } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
-import { connectDB } from './config/database';
+// NOTE: Ensure 'database.ts' exists in 'src/config/' and exports 'connectDB'.
+import { connectDB } from './config/database'; 
 
 // Load environment variables FIRST
 dotenv.config();
