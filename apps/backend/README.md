@@ -1,0 +1,201 @@
+// src/models/User.model.ts
+
+/**
+ * User Model
+ * 
+ * Defines the User schema for MongoDB and includes methods for:
+ * - Password hashing
+ * - Password comparison
+ * - JWT token generation
+ */
+
+import mongoose, { Schema, Model } from 'mongoose';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { IUser, UserRole, JWTPayload } from '../types';
+
+/**
+ * User Schema Definition
+ * 
+ * Schema defines the structure of documents in the 'users' collection
+ */
+const UserSchema = new Schema<IUser>(
+  {
+    // Email - required and unique
+    email: {
+      type: String,
+      required: [true, 'Email is required'],
+      unique: true, // No two users can have the same email
+      lowercase: true, // Always store in lowercase
+      trim: true, // Remove whitespace
+      match: [
+        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+        'Please provide a valid email',
+      ],
+    },
+
+    // Password - optional for OAuth users
+    password: {
+      type: String,
+      minlength: [6, 'Password must be at least 6 characters'],
+      select: false, // Don't include password in queries by default
+    },
+
+    // Full name
+    name: {
+      type: String,
+      required: [true, 'Name is required'],
+      trim: true,
+      maxlength: [50, 'Name cannot exceed 50 characters'],
+    },
+
+    // User role - determines permissions
+    role: {
+      type: String,
+      enum: Object.values(UserRole), // Only allow defined roles
+      default: UserRole.CUSTOMER,
+    },
+
+    // Google OAuth ID
+    googleId: {
+      type: String,
+      unique: true, // Each Google account maps to one user
+      sparse: true, // Allow multiple null values (for non-OAuth users)
+    },
+
+    // Profile picture URL
+    avatar: {
+      type: String,
+      default: '', // Can store R2 URL or Google profile picture
+    },
+
+    // Phone number
+    phone: {
+      type: String,
+      match: [/^[0-9]{10,15}$/, 'Please provide a valid phone number'],
+    },
+
+    // Address object
+    address: {
+      street: { type: String },
+      city: { type: String },
+      state: { type: String },
+      zipCode: { type: String },
+      country: { type: String, default: 'Kenya' },
+    },
+
+    // Email verification status
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    // Automatically add createdAt and updatedAt timestamps
+    timestamps: true,
+  }
+);
+
+/**
+ * Pre-save Middleware
+ * 
+ * This runs BEFORE a document is saved to the database
+ * We use it to hash passwords before storing them
+ * 
+ * NOTE: Arrow functions don't work here because we need 'this' context
+ */
+UserSchema.pre('save', async function (next) {
+  // Only hash the password if it's new or modified
+  if (!this.isModified('password')) {
+    return next();
+  }
+
+  // If password exists (not OAuth user)
+  if (this.password) {
+    try {
+      // Generate salt (random data added to password before hashing)
+      // 10 is the cost factor - higher = more secure but slower
+      const salt = await bcrypt.genSalt(10);
+
+      // Hash the password with the salt
+      this.password = await bcrypt.hash(this.password, salt);
+
+      next();
+    } catch (error) {
+      next(error as Error);
+    }
+  } else {
+    next();
+  }
+});
+
+/**
+ * Instance Method: Compare Password
+ * 
+ * Checks if provided password matches hashed password in database
+ * Used during login
+ * 
+ * @param candidatePassword - Plain text password from login form
+ * @returns Boolean - true if passwords match
+ */
+UserSchema.methods.comparePassword = async function (
+  candidatePassword: string
+): Promise<boolean> {
+  try {
+    // If user doesn't have a password (OAuth user), return false
+    if (!this.password) {
+      return false;
+    }
+
+    // bcrypt.compare() hashes candidatePassword and compares with stored hash
+    return await bcrypt.compare(candidatePassword, this.password);
+  } catch (error) {
+    return false;
+  }
+};
+
+/**
+ * Instance Method: Generate Auth Token
+ * 
+ * Creates a JWT token for authenticated sessions
+ * Token contains user ID, email, and role
+ * 
+ * @returns JWT token string
+ */
+UserSchema.methods.generateAuthToken = function (): string {
+  // Payload - data embedded in the token
+  const payload: JWTPayload = {
+    userId: this._id.toString(),
+    email: this.email,
+    role: this.role,
+  };
+
+  // Get JWT secret from environment variables
+  const secret = process.env.JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('JWT_SECRET is not defined');
+  }
+
+  // Sign the token with secret and set expiration
+  // jwt.sign() creates the token
+  const token = jwt.sign(
+    payload,
+    secret,
+    {
+      expiresIn: process.env.JWT_EXPIRE || '7d', // Token valid for 7 days
+    }
+  );
+
+  return token;
+};
+
+/**
+ * Create and export the User model
+ * 
+ * Model is a class with which we construct documents
+ * mongoose.model() takes collection name and schema
+ */
+const User: Model<IUser> = mongoose.model<IUser>('User', UserSchema);
+
+export default User;
