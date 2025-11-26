@@ -8,7 +8,7 @@ import Cart from '../models/Cart.model';
 import { asyncHandler, AppError } from '../middleware/error.middleware';
 
 // **NOTE:** Using .js extension for module resolution safety
-import { initiateMpesaStkPush } from '../services/mpesa.service.js'; 
+import { initiateMpesaStkPush } from '../services/mpesa.service'; 
 
 // @desc    Place a new order (Checkout from Cart)
 // @route   POST /api/orders
