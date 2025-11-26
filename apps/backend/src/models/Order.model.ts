@@ -2,9 +2,8 @@
 
 /**
  * Order Model
- * 
- * Represents completed purchases
- * Orders are created when payment is confirmed
+ * * Represents completed purchases
+ * Orders are created when payment is confirmed or initiated
  */
 
 import mongoose, { Schema, Model } from 'mongoose';
@@ -17,7 +16,6 @@ import { IOrder, OrderStatus, PaymentMethod, ICartItem } from '../types';
 const OrderSchema = new Schema<IOrder>(
   {
     // Unique order identifier
-    // Format: INF-2024-00001
     orderNumber: {
       type: String,
       required: true,
@@ -32,8 +30,6 @@ const OrderSchema = new Schema<IOrder>(
     },
 
     // Items purchased (snapshot from cart at time of order)
-    // We store items directly instead of referencing cart
-    // because cart contents can change after order is placed
     items: {
       type: [
         {
@@ -73,7 +69,7 @@ const OrderSchema = new Schema<IOrder>(
     },
 
     // Order status tracking
-    status: {
+    orderStatus: { // Renamed from 'status' to 'orderStatus' for consistency with types
       type: String,
       enum: Object.values(OrderStatus),
       default: OrderStatus.PENDING,
@@ -97,6 +93,23 @@ const OrderSchema = new Schema<IOrder>(
     transactionId: {
       type: String,
     },
+    
+    // --- M-Pesa Specific Fields ---
+    mpesaCheckoutId: {
+      type: String, // Stores the CheckoutRequestID for callback tracking
+      unique: true,
+      sparse: true, // Allow multiple documents with null/missing value
+    },
+    
+    paidAt: {
+        type: Date, // Timestamp for successful payment confirmation
+    },
+
+    paymentResult: {
+        type: Schema.Types.Mixed, // Store the full payment response for debugging/audit
+    },
+    // -----------------------------
+
 
     // Shipping/delivery address
     shippingAddress: {
@@ -108,7 +121,7 @@ const OrderSchema = new Schema<IOrder>(
         type: String,
         required: true,
       },
-      street: {
+      street: { // Was 'address' in request, mapped to 'street' here
         type: String,
         required: true,
       },
@@ -120,7 +133,7 @@ const OrderSchema = new Schema<IOrder>(
         type: String,
         required: true,
       },
-      zipCode: {
+      zipCode: { // Was 'postalCode' in request, mapped to 'zipCode' here
         type: String,
         required: true,
       },
@@ -162,7 +175,7 @@ OrderSchema.index({ user: 1, createdAt: -1 });
 OrderSchema.index({ orderNumber: 1 });
 
 // Index for status filtering
-OrderSchema.index({ status: 1 });
+OrderSchema.index({ orderStatus: 1 });
 
 // Index for payment status
 OrderSchema.index({ paymentStatus: 1 });
@@ -170,126 +183,38 @@ OrderSchema.index({ paymentStatus: 1 });
 // Index for transaction ID lookup
 OrderSchema.index({ transactionId: 1 });
 
+// Index for M-Pesa tracking
+OrderSchema.index({ mpesaCheckoutId: 1 });
+
+
 /**
- * Pre-save Middleware: Generate Order Number
- * 
- * Automatically generates a unique order number
- * Only runs when creating a new order (not on updates)
+ * Pre-save Middleware: Generate Order Number (SIMPLIFIED)
+ * * Automatically generates a unique, simple order number.
+ * Only runs if the orderNumber is 'TEMP' (set by controller) or missing.
  */
 OrderSchema.pre<IOrder>('save', async function (next: NextFunction) {
-  // Only generate order number for new documents
-  if (!this.isNew) {
-    return next();
-  }
-
   try {
-    // Get current year
-    const year = new Date().getFullYear();
-
-    // Find the last order created this year
-    const lastOrder = await mongoose.model('Order').findOne({
-      orderNumber: new RegExp(`^INF-${year}-`),
-    })
-    .sort({ createdAt: -1 })
-    .limit(1);
-
-    let orderCount = 1;
-
-    if (lastOrder) {
-      // Extract the count from last order number
-      // Example: "INF-2024-00042" -> 42
-      const lastNumber = parseInt(lastOrder.orderNumber.split('-')[2]);
-      orderCount = lastNumber + 1;
+    // Generate order number if not already set or if it's the temporary placeholder
+    if (this.orderNumber === 'TEMP' || !this.orderNumber) {
+      // Use the last 6 digits of the timestamp
+      const timestamp = Date.now().toString().slice(-6);
+      // Generate a random number between 0 and 999
+      const random = Math.floor(Math.random() * 1000);
+      
+      // Format: ORD-######-###
+      this.orderNumber = `ORD-${timestamp}-${random.toString().padStart(3, '0')}`;
     }
-
-    // Generate new order number with padding
-    // Example: "INF-2024-00001"
-    this.orderNumber = `INF-${year}-${orderCount.toString().padStart(5, '0')}`;
-
     next();
   } catch (error) {
     next(error as Error);
   }
 });
 
-/**
- * Instance Method: Update Status
- * 
- * Updates order status and sets deliveredAt date when delivered
- * 
- * @param newStatus - The new status to set
- */
-OrderSchema.methods.updateStatus = async function (
-  this: IOrder,
-  newStatus: OrderStatus
-): Promise<void> {
-  this.status = newStatus;
-
-  // If status is delivered, record the delivery date
-  if (newStatus === OrderStatus.DELIVERED) {
-    this.deliveredAt = new Date();
-  }
-
-  await this.save();
-};
-
-/**
- * Instance Method: Mark as Paid
- * 
- * Updates payment status to completed
- * 
- * @param transactionId - Payment transaction ID
- */
-OrderSchema.methods.markAsPaid = async function (
-  this: IOrder,
-  transactionId: string
-): Promise<void> {
-  this.paymentStatus = 'completed';
-  this.transactionId = transactionId;
-  this.status = OrderStatus.PAID;
-  await this.save();
-};
-
-/**
- * Instance Method: Cancel Order
- * 
- * Cancels the order and restores product stock
- */
-OrderSchema.methods.cancelOrder = async function (this: IOrder): Promise<void> {
-  // Only allow cancellation for certain statuses
-  const cancellableStatuses = [
-    OrderStatus.PENDING,
-    OrderStatus.PAID,
-    OrderStatus.PROCESSING,
-  ];
-
-  if (!cancellableStatuses.includes(this.status)) {
-    throw new Error('Order cannot be cancelled at this stage');
-  }
-
-  // Restore stock for each item
-  const Product = mongoose.model('Product');
-  
-  for (const item of this.items) {
-    const product = await Product.findById(item.product);
-    if (product && product.stock !== -1) {
-      // Only restore stock for physical products
-      product.stock += item.quantity;
-      await product.save();
-    }
-  }
-
-  // Update order status
-  this.status = OrderStatus.CANCELLED;
-  await this.save();
-};
 
 /**
  * Static Method: Get User Orders
- * 
- * Retrieves all orders for a specific user
- * 
- * @param userId - ID of the user
+ * * Retrieves all orders for a specific user
+ * * @param userId - ID of the user
  * @param page - Page number for pagination
  * @param limit - Number of orders per page
  * @returns Paginated orders
@@ -320,73 +245,6 @@ OrderSchema.statics.getUserOrders = async function (
       total,
       totalPages: Math.ceil(total / limit),
     },
-  };
-};
-
-/**
- * Static Method: Get Orders by Status
- * 
- * Retrieves orders filtered by status (for staff/admin)
- * 
- * @param status - Order status to filter by
- * @param page - Page number
- * @param limit - Items per page
- */
-OrderSchema.statics.getOrdersByStatus = async function (
-  status: OrderStatus,
-  page: number = 1,
-  limit: number = 20
-) {
-  const skip = (page - 1) * limit;
-
-  const orders = await this.find({ status })
-    .populate('user', 'name email phone')
-    .populate({
-      path: 'items.product',
-      select: 'name images price',
-    })
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit);
-
-  const total = await this.countDocuments({ status });
-
-  return {
-    orders,
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-    },
-  };
-};
-
-/**
- * Static Method: Get Order Statistics
- * 
- * Returns statistics for admin dashboard
- * 
- * @returns Order statistics object
- */
-OrderSchema.statics.getOrderStats = async function () {
-  const totalOrders = await this.countDocuments();
-  const pendingOrders = await this.countDocuments({ status: OrderStatus.PENDING });
-  const completedOrders = await this.countDocuments({ status: OrderStatus.DELIVERED });
-  
-  // Calculate total revenue from completed orders
-  const revenueResult = await this.aggregate([
-    { $match: { status: OrderStatus.DELIVERED } },
-    { $group: { _id: null, total: { $sum: '$totalAmount' } } },
-  ]);
-
-  const totalRevenue = revenueResult[0]?.total || 0;
-
-  return {
-    totalOrders,
-    pendingOrders,
-    completedOrders,
-    totalRevenue,
   };
 };
 
