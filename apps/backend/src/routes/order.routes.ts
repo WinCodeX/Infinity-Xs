@@ -1,7 +1,7 @@
 // src/routes/order.routes.ts
 
 import express from 'express';
-// **FIX: Explicitly use .js extension** for relative path imports
+// **FIX: Explicitly use .js extension**
 import { placeOrder, mpesaCallback } from '../controllers/order.controller.js';
 import { protect } from '../middleware/auth.middleware.js';
 
