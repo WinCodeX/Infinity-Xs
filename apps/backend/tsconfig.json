@@ -11,14 +11,15 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "moduleResolution": "node",
-    "types": ["node"],
-    "allowSyntheticDefaultImports": true
+    "types": ["node"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"],
   "ts-node": {
-    "esm": false,
     "transpileOnly": true,
-    "files": true
+    "files": true,
+    "compilerOptions": {
+      "module": "commonjs"
+    }
   }
 }
