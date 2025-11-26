@@ -7,7 +7,7 @@
  */
 
 import mongoose, { Schema, Model } from 'mongoose';
-import { NextFunction } from 'express';
+import { NextFunction } from 'express'; // Keep for type reference if needed elsewhere
 import { IOrder, OrderStatus, PaymentMethod, ICartItem } from '../types';
 
 /**
@@ -188,26 +188,22 @@ OrderSchema.index({ mpesaCheckoutId: 1 });
 
 
 /**
- * Pre-save Middleware: Generate Order Number (SIMPLIFIED)
- * * Automatically generates a unique, simple order number.
- * Only runs if the orderNumber is 'TEMP' (set by controller) or missing.
+ * Pre-save Middleware: Generate Order Number (FIXED)
+ * * NOTE: For async pre-hooks, Mongoose handles the Promise chain; 
+ * the 'next' callback is not passed as an argument.
  */
-OrderSchema.pre<IOrder>('save', async function (next: NextFunction) {
-  try {
-    // Generate order number if not already set or if it's the temporary placeholder
-    if (this.orderNumber === 'TEMP' || !this.orderNumber) {
-      // Use the last 6 digits of the timestamp
-      const timestamp = Date.now().toString().slice(-6);
-      // Generate a random number between 0 and 999
-      const random = Math.floor(Math.random() * 1000);
-      
-      // Format: ORD-######-###
-      this.orderNumber = `ORD-${timestamp}-${random.toString().padStart(3, '0')}`;
-    }
-    next();
-  } catch (error) {
-    next(error as Error);
+OrderSchema.pre<IOrder>('save', async function () {
+  // Generate order number if not already set or if it's the temporary placeholder
+  if (this.orderNumber === 'TEMP' || !this.orderNumber) {
+    // Use the last 6 digits of the timestamp
+    const timestamp = Date.now().toString().slice(-6);
+    // Generate a random number between 0 and 999
+    const random = Math.floor(Math.random() * 1000);
+    
+    // Format: ORD-######-###
+    this.orderNumber = `ORD-${timestamp}-${random.toString().padStart(3, '0')}`;
   }
+  // The function implicitly returns a Promise which Mongoose awaits.
 });
 
 
