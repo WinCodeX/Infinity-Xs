@@ -1,26 +1,19 @@
 // src/server.ts
 
-/**
- * Server Entry Point - SIMPLIFIED WORKING VERSION
- * * This version only includes what we have so far
- * We'll add more routes as we build them
- */
-
-import express, { Application, Request, Response } from 'express';
+import express, { Application, Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
-// NOTE: Ensure 'database.ts' exists in 'src/config/' and exports 'connectDB'.
-import { connectDB } from './config/database'; 
 
+// --- CONFIG & UTILITIES ---
+import { connectDB } from './config/database'; 
+import { AppError } from './middleware/error.middleware'; 
+
+// --- ROUTE IMPORTS (MUST BE AT THE TOP) ---
+import authRoutes from './routes/auth.routes';
 import productRoutes from './routes/product.routes';
 import cartRoutes from './routes/cart.routes';
 import orderRoutes from './routes/order.routes';
-
-
-
-
-
 
 // Load environment variables FIRST
 dotenv.config();
@@ -50,14 +43,16 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/*** ROUTES*/
+/**
+ * ROUTES REGISTRATION
+ * All route variables are now defined and ready to use
+ */
 
-// Routes
+// API Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/products', productRoutes); // Add this
-app.use('/api/cart', cartRoutes);        // Add this
-app.use('/api/orders', orderRoutes);     // Add this
- 
+app.use('/api/products', productRoutes); 
+app.use('/api/cart', cartRoutes);        
+app.use('/api/orders', orderRoutes);     
 
 // Health check
 app.get('/api/health', (req: Request, res: Response) => {
@@ -77,33 +72,35 @@ app.get('/', (req: Request, res: Response) => {
     endpoints: {
       health: '/api/health',
       auth: '/api/auth',
+      products: '/api/products',
+      cart: '/api/cart',
+      orders: '/api/orders'
     },
   });
 });
-
-// Import auth routes
-import authRoutes from './routes/auth.routes';
-app.use('/api/auth', authRoutes);
 
 /**
  * ERROR HANDLING
  */
 
-// 404 Handler
-app.use((req: Request, res: Response) => {
-  res.status(404).json({
-    success: false,
-    message: `Route ${req.originalUrl} not found`,
-  });
+// 404 Handler - Catches requests to undefined routes
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Pass a structured error to the global handler
+  next(new AppError(`Route ${req.originalUrl} not found`, 404));
 });
 
-// Global error handler
-app.use((err: any, req: Request, res: Response, next: any) => {
-  console.error('❌ Error:', err);
+// Global error handler - Centralized error processing
+// Notice the signature: (err, req, res, next)
+app.use((err: AppError, req: Request, res: Response, next: NextFunction) => {
+  console.error('❌ Error:', err.message);
 
-  res.status(err.statusCode || 500).json({
+  const statusCode = err.statusCode || 500;
+  const message = err.message || 'Server Error';
+
+  res.status(statusCode).json({
     success: false,
-    message: err.message || 'Server Error',
+    message: message,
+    // Only send stack trace in development
     error: process.env.NODE_ENV === 'development' ? err.stack : undefined,
   });
 });
@@ -113,7 +110,7 @@ app.use((err: any, req: Request, res: Response, next: any) => {
  */
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
   ╔════════════════════════════════════════╗
   ║                                        ║
@@ -123,26 +120,25 @@ app.listen(PORT, () => {
   ║   Port: ${PORT}                           ║
   ║   URL: http://localhost:${PORT}         ║
   ║                                        ║
-  ║   Routes:                              ║
-  ║   GET  /                               ║
-  ║   GET  /api/health                     ║
-  ║   POST /api/auth/register              ║
-  ║   POST /api/auth/login                 ║
-  ║   GET  /api/auth/me                    ║
+  ║   Registered Routes:                   ║
+  ║   /api/auth                            ║
+  ║   /api/products                        ║
+  ║   /api/cart                            ║
+  ║   /api/orders                          ║
   ║                                        ║
   ╚════════════════════════════════════════╝
   `);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('👋 SIGTERM signal received: closing server');
-  process.exit(0);
-});
+// Graceful shutdown logic
+const shutdown = () => {
+  server.close(() => {
+    console.log('✅ HTTP server closed.');
+    process.exit(0);
+  });
+};
 
-process.on('SIGINT', () => {
-  console.log('👋 SIGINT signal received: closing server');
-  process.exit(0);
-});
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 export default app;
