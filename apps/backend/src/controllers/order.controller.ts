@@ -1,112 +1,73 @@
 // src/controllers/order.controller.ts
 
 import { Response, Request } from 'express';
-// Note: Assuming these types, models, and middleware exist and are correctly configured.
-import { AuthRequest, OrderStatus, PaymentMethod } from '../types'; 
+import { OrderStatus } from '../types';
 import Order from '../models/Order.model';
-import Cart from '../models/Cart.model';
-import { asyncHandler, AppError } from '../middleware/error.middleware';
-
-// **FIX: Explicitly use .js extension**
-import { initiateMpesaStkPush } from '../services/mpesa.service'; 
-
-// @desc    Place a new order (Checkout from Cart)
-// @route   POST /api/orders
-// @access  Private
-export const placeOrder = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { 
-    shippingAddress, 
-    paymentMethod, 
-    notes, 
-    phoneNumber // Required for M-Pesa
-  } = req.body;
-
-  const userId = req.user!._id;
-
-  // 1. Get user's cart and validate
-  const cart = await Cart.findOne({ user: userId });
-  if (!cart || cart.items.length === 0) {
-    throw new AppError('Cart is empty. Cannot place an order.', 400);
-  }
-
-  // 2. Data Validation specific to M-Pesa
-  const totalAmount = cart.totalAmount;
-
-  if (paymentMethod === PaymentMethod.MPESA) {
-    // If phone number is not provided in body, check the authenticated user object
-    if (!phoneNumber && !req.user!.phone) {
-      throw new AppError('M-Pesa payment requires a registered phone number in the request body or user profile.', 400);
-    }
-    // M-Pesa minimum amount check
-    if (totalAmount <= 1) {
-        throw new AppError('Minimum order amount for M-Pesa is KES 1.', 400);
-    }
-  }
-
-  // 3. Create Order Document (Set initial status to Pending Payment)
-  const order = await Order.create({
-    user: userId,
-    items: cart.items,
-    totalAmount,
-    shippingAddress,
-    paymentMethod,
-    notes,
-    orderNumber: 'TEMP', // Assuming a pre-save hook generates the final number
-    // Set initial status based on payment method
-    orderStatus: paymentMethod === PaymentMethod.MPESA ? OrderStatus.PENDING_PAYMENT : OrderStatus.PLACED,
-  });
-
-  let paymentResult = null;
-
-  // 4. Initiate M-Pesa Payment
-  if (paymentMethod === PaymentMethod.MPESA) {
-    try {
-      // Use phone from body first, then fallback to user profile phone
-      const phoneForStk = phoneNumber || req.user!.phone;
-      
-      paymentResult = await initiateMpesaStkPush(
-        totalAmount, 
-        phoneForStk, 
-        order._id.toString()
-      );
-      
-      // Save the M-Pesa Checkout Request ID for tracking callbacks
-      order.mpesaCheckoutId = paymentResult.CheckoutRequestID; 
-      await order.save();
-      
-      console.log(`📲 M-Pesa STK Push initiated successfully for Order ${order._id}`);
-
-    } catch (error) {
-      // If payment initiation fails, clean up the failed order document
-      await Order.findByIdAndDelete(order._id); 
-      console.error('M-Pesa STK Initiation Failed:', error);
-      throw new AppError('Failed to initiate M-Pesa payment. Please check logs for details.', 500);
-    }
-  }
-
-  // 5. Clear Cart (Only if payment initiation was successful or not required)
-  await cart.clearCart();
-
-  // 6. Respond
-  res.status(201).json({ 
-    success: true, 
-    message: paymentMethod === PaymentMethod.MPESA ? 'Order placed. Please check phone for payment prompt.' : 'Order placed successfully.', 
-    data: {
-        order,
-        paymentDetails: paymentResult
-    }
-  });
-});
-
+import Cart from '../models/Cart.model'; // Need Cart to clear it upon successful payment
+import { asyncHandler } from '../middleware/error.middleware'; 
 
 // @desc    Receives the final payment status from M-Pesa API (Callback)
 // @route   POST /api/orders/callback
 // @access  Public (Called by M-Pesa servers, MUST be public)
 export const mpesaCallback = asyncHandler(async (req: Request, res: Response) => {
-    // This is a minimal stub to ensure the route exists and returns 200 OK.
-    // Full implementation requires parsing complex M-Pesa JSON and updating the Order.
-    console.log('M-Pesa Callback received:', req.body);
+    // NOTE: This endpoint MUST respond with a 200 OK fast, or Safaricom will retry the call.
+
+    // 1. Extract M-Pesa data
+    const mpesaBody = req.body;
     
-    // CRITICAL: Must return 200 OK immediately to M-Pesa to prevent retries.
-    res.status(200).send('Callback received and acknowledged.');
+    // Check if the body structure is correct
+    if (!mpesaBody || !mpesaBody.Body || !mpesaBody.Body.stkCallback) {
+        console.error('Invalid M-Pesa Callback Body Received:', mpesaBody);
+        return res.status(200).json({ message: 'Invalid callback data acknowledged.' });
+    }
+
+    const callbackData = mpesaBody.Body.stkCallback;
+    const resultCode = callbackData.ResultCode;
+    const checkoutRequestId = callbackData.CheckoutRequestID;
+    
+    // 2. Find the pending order using the CheckoutRequestID
+    const order = await Order.findOne({ mpesaCheckoutId: checkoutRequestId });
+
+    if (!order) {
+        console.error(`M-Pesa Callback: Order not found for Checkout ID: ${checkoutRequestId}`);
+        return res.status(200).json({ message: 'Order reference processed (not found, acknowledged).' });
+    }
+
+    // 3. Process Result
+    if (resultCode === 0) {
+        // SUCCESS: Payment was successful
+        const transactionMetadata = callbackData.CallbackMetadata.Item;
+        const transactionId = transactionMetadata.find((item: any) => item.Name === 'MpesaReceiptNumber')?.Value;
+        
+        // Update order status and payment details
+        order.orderStatus = OrderStatus.PAID;
+        order.paymentStatus = 'completed';
+        order.transactionId = transactionId;
+        order.paidAt = new Date();
+        
+        // Optionally save full transaction details for audit
+        order.paymentResult = { status: 'COMPLETED', message: 'Payment successful', transactionId: transactionId }; 
+
+        // CRITICAL: Clear the user's cart only after payment is successful
+        const cart = await Cart.findOne({ user: order.user });
+        if (cart) {
+            await cart.clearCart();
+        }
+
+        await order.save();
+        console.log(`✅ M-Pesa Payment Success for Order ${order._id}. Transaction ID: ${transactionId}`);
+
+    } else {
+        // FAILURE: Payment failed (user cancelled, insufficient funds, timeout, etc.)
+        const failureReason = callbackData.ResultDesc || 'Payment failed/cancelled by user.';
+        
+        order.orderStatus = OrderStatus.PAYMENT_FAILED;
+        order.paymentStatus = 'failed';
+        order.paymentResult = { status: 'FAILED', message: failureReason };
+        await order.save();
+        console.warn(`❌ M-Pesa Payment Failed for Order ${order._id}. Reason: ${failureReason}`);
+    }
+
+    // 4. Send Acknowledgment (CRITICAL)
+    res.status(200).send('Callback received successfully.');
 });
