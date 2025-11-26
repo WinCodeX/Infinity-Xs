@@ -13,6 +13,15 @@ import helmet from 'helmet';
 // NOTE: Ensure 'database.ts' exists in 'src/config/' and exports 'connectDB'.
 import { connectDB } from './config/database'; 
 
+import productRoutes from './routes/product.routes';
+import cartRoutes from './routes/cart.routes';
+import orderRoutes from './routes/order.routes';
+
+
+
+
+
+
 // Load environment variables FIRST
 dotenv.config();
 
@@ -41,9 +50,14 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/**
- * ROUTES
- */
+/*** ROUTES*/
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/products', productRoutes); // Add this
+app.use('/api/cart', cartRoutes);        // Add this
+app.use('/api/orders', orderRoutes);     // Add this
+ 
 
 // Health check
 app.get('/api/health', (req: Request, res: Response) => {
