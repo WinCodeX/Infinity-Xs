@@ -2,42 +2,40 @@
 
 /**
  * Authentication Controllers
- * 
- * Handles user registration, login, and profile management
+ * * Handles user registration, login, and profile management
  * Controllers contain the business logic for each route
  */
 
 import { Response } from 'express';
-import { AuthRequest } from '../types';
-import User from '../models/User.model';
-import { asyncHandler } from '../middleware/error.middleware';
-import { AppError } from '../middleware/error.middleware';
+// Assuming AuthRequest and AppError are defined in '../types' or similar
+// Assuming IUserDocument is defined to include custom methods (comparePassword, generateAuthToken)
+import { AuthRequest, IUserDocument } from '../types'; 
+// We cast the imported default model to our custom UserModel type for type safety
+import User from '../models/User.model'; 
+import { asyncHandler, AppError } from '../middleware/error.middleware';
+import { Model } from 'mongoose'; 
+
+// Cast the imported model to a type that includes the custom instance methods
+const UserModel = User as unknown as Model<IUserDocument>;
 
 /**
  * @route   POST /api/auth/register
  * @desc    Register a new user
  * @access  Public
- * 
- * Flow:
- * 1. Check if user already exists
- * 2. Create new user (password auto-hashed by model)
- * 3. Generate JWT token
- * 4. Return user data and token
  */
 export const register = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
     const { email, password, name } = req.body;
 
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await UserModel.findOne({ email });
 
     if (existingUser) {
       throw new AppError('User already exists with this email', 400);
     }
 
-    // Create new user
-    // Password will be automatically hashed by pre-save middleware
-    const user = await User.create({
+    // Create new user (password auto-hashed by pre-save middleware)
+    const user = await UserModel.create({
       email,
       password,
       name,
@@ -47,7 +45,6 @@ export const register = asyncHandler(
     const token = user.generateAuthToken();
 
     // Send response
-    // Don't send password back even though it's hashed
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
@@ -65,30 +62,25 @@ export const register = asyncHandler(
   }
 );
 
+---
+
 /**
  * @route   POST /api/auth/login
  * @desc    Login user
  * @access  Public
- * 
- * Flow:
- * 1. Find user by email (include password this time)
- * 2. Verify password
- * 3. Generate token
- * 4. Return user and token
  */
 export const login = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
     const { email, password } = req.body;
 
-    // Find user and include password field
-    // select('+password') overrides the default select: false
-    const user = await User.findOne({ email }).select('+password');
+    // Find user and explicitly include password field
+    const user = await UserModel.findOne({ email }).select('+password');
 
     if (!user) {
       throw new AppError('Invalid email or password', 401);
     }
 
-    // Check if password matches
+    // Check if password matches (comparePassword is a custom instance method)
     const isPasswordValid = await user.comparePassword(password);
 
     if (!isPasswordValid) {
@@ -98,7 +90,7 @@ export const login = asyncHandler(
     // Generate token
     const token = user.generateAuthToken();
 
-    // Remove password from response
+    // Remove password from response (user.password is safely defined as optional in IUserDocument)
     user.password = undefined;
 
     res.status(200).json({
@@ -120,17 +112,19 @@ export const login = asyncHandler(
   }
 );
 
+---
+
 /**
  * @route   GET /api/auth/me
  * @desc    Get current user profile
  * @access  Private (requires authentication)
- * 
- * req.user is set by the protect middleware
  */
 export const getMe = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
-    // User already attached by protect middleware
-    if (!req.user) {
+    // req.user is correctly set by the protect middleware as IUserDocument
+    const user = req.user as IUserDocument;
+    
+    if (!user) {
       throw new AppError('User not found', 404);
     }
 
@@ -139,32 +133,33 @@ export const getMe = asyncHandler(
       message: 'User profile retrieved',
       data: {
         user: {
-          _id: req.user._id,
-          email: req.user.email,
-          name: req.user.name,
-          role: req.user.role,
-          avatar: req.user.avatar,
-          phone: req.user.phone,
-          address: req.user.address,
-          isEmailVerified: req.user.isEmailVerified,
-          createdAt: req.user.createdAt,
+          _id: user._id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          avatar: user.avatar,
+          phone: user.phone,
+          address: user.address,
+          isEmailVerified: user.isEmailVerified,
+          createdAt: user.createdAt,
         },
       },
     });
   }
 );
 
+---
+
 /**
  * @route   PUT /api/auth/update
  * @desc    Update user profile
  * @access  Private
- * 
- * Allows users to update their name, phone, and address
- * Email and password require separate routes for security
  */
 export const updateProfile = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
-    if (!req.user) {
+    const currentUser = req.user as IUserDocument;
+    
+    if (!currentUser) {
       throw new AppError('User not found', 404);
     }
 
@@ -180,8 +175,8 @@ export const updateProfile = asyncHandler(
     });
 
     // Update user
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
+    const user = await UserModel.findByIdAndUpdate(
+      currentUser._id,
       updates,
       {
         new: true, // Return updated document
@@ -211,26 +206,28 @@ export const updateProfile = asyncHandler(
   }
 );
 
+---
+
 /**
  * @route   PUT /api/auth/change-password
  * @desc    Change user password
  * @access  Private
- * 
- * Requires current password for security
  */
 export const changePassword = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
     const { currentPassword, newPassword } = req.body;
+    const currentUser = req.user as IUserDocument;
 
-    if (!req.user) {
+    if (!currentUser) {
       throw new AppError('User not found', 404);
     }
 
-    // Get user with password
-    const user = await User.findById(req.user._id).select('+password');
+    // Get user with password explicitly selected
+    const user = await UserModel.findById(currentUser._id).select('+password');
 
     if (!user || !user.password) {
-      throw new AppError('User not found', 404);
+      // User must have a password to change it (i.e., not an OAuth user)
+      throw new AppError('Password not set for this account', 404);
     }
 
     // Verify current password
@@ -241,13 +238,13 @@ export const changePassword = asyncHandler(
     }
 
     // Validate new password
-    if (newPassword.length < 6) {
+    if (!newPassword || newPassword.length < 6) {
       throw new AppError('New password must be at least 6 characters', 400);
     }
 
     // Update password
     user.password = newPassword;
-    await user.save(); // This triggers pre-save middleware to hash password
+    await user.save(); // This triggers pre-save middleware to hash the new password
 
     res.status(200).json({
       success: true,
@@ -256,18 +253,15 @@ export const changePassword = asyncHandler(
   }
 );
 
+---
+
 /**
  * @route   POST /api/auth/google
  * @desc    Google OAuth login/register
  * @access  Public
- * 
- * This will be implemented with Passport.js
- * For now, we'll create a placeholder
  */
 export const googleAuth = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
-    // This will be implemented with passport-google-oauth20
-    // For now, return a message
     res.status(501).json({
       success: false,
       message: 'Google OAuth not yet implemented',
