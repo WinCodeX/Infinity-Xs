@@ -2,13 +2,14 @@
 
 import { Response, Request } from 'express';
 // Note: Assuming these types, models, and middleware exist and are correctly configured.
-import { AuthRequest, OrderStatus, PaymentMethod } from '../types';
+// NOTE: We assume 'types' is in the project root, so we don't force .js extension for non-relative paths
+import { AuthRequest, OrderStatus, PaymentMethod } from '../types'; 
 import Order from '../models/Order.model';
 import Cart from '../models/Cart.model';
 import { asyncHandler, AppError } from '../middleware/error.middleware';
 
-// **NOTE:** Using .js extension for module resolution safety
-import { initiateMpesaStkPush } from '../services/mpesa.service'; 
+// **FIX: Explicitly use .js extension** for relative path imports
+import { initiateMpesaStkPush } from '../services/mpesa.service.js'; 
 
 // @desc    Place a new order (Checkout from Cart)
 // @route   POST /api/orders
@@ -110,5 +111,3 @@ export const mpesaCallback = asyncHandler(async (req: Request, res: Response) =>
     // CRITICAL: Must return 200 OK immediately to M-Pesa to prevent retries.
     res.status(200).send('Callback received and acknowledged.');
 });
-
-// NOTE: We no longer need 'createOrder' or 'checkoutOrder' as 'placeOrder' handles checkout.
