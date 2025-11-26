@@ -6,14 +6,14 @@ import cors from 'cors';
 import helmet from 'helmet';
 
 // --- CONFIG & UTILITIES ---
-import { connectDB } from './config/database.js'; 
-import { AppError } from './middleware/error.middleware.js'; 
+import { connectDB } from './config/database'; 
+import { AppError } from './middleware/error.middleware'; 
 
 // --- ROUTE IMPORTS (MUST BE AT THE TOP) ---
-import authRoutes from './routes/auth.routes.js';
-import productRoutes from './routes/product.routes.js';
-import cartRoutes from './routes/cart.routes.js';
-import orderRoutes from './routes/order.routes.js';
+import authRoutes from './routes/auth.routes';
+import productRoutes from './routes/product.routes';
+import cartRoutes from './routes/cart.routes';
+import orderRoutes from './routes/order.routes';
 
 // Load environment variables FIRST
 dotenv.config();
