@@ -40,39 +40,69 @@ export const getCart = asyncHandler(async (req: AuthRequest, res: Response) => {
 // @access  Private
 export const checkoutCart = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { 
-    shippingAddress, 
-    paymentMethod, 
+    shippingAddress: inputShippingAddress, // The incoming address object
+    paymentMethod: inputPaymentMethod, // "Mpesa" or other
     notes, 
     phoneNumber // Required for M-Pesa
   } = req.body;
 
   const userId = req.user!._id;
 
-  // 1. Get user's cart and validate
+  // 1. Validate Payment Method (FIX 2: Ensure uppercase MPESA is used)
+  const paymentMethod = inputPaymentMethod === 'Mpesa' ? PaymentMethod.MPESA : inputPaymentMethod;
+  if (!Object.values(PaymentMethod).includes(paymentMethod)) {
+    throw new AppError(`Invalid payment method: ${inputPaymentMethod}.`, 400);
+  }
+
+  // 2. Validate and Map Shipping Address (FIX 1: Map fields to match Order Model schema)
+  // NOTE: You must now provide 'name' and 'state' in your request body as they are required by the model.
+  const requiredAddressFields = ['address', 'city', 'postalCode', 'name', 'state'];
+  const missingFields = requiredAddressFields.filter(field => !inputShippingAddress[field]);
+  
+  if (missingFields.length > 0) {
+      throw new AppError(`Missing required shipping address fields: ${missingFields.join(', ')}.`, 400);
+  }
+
+  // Transform the incoming address fields into the format required by the Order model
+  const shippingAddress = {
+    // You MUST provide name and state in your incoming request body now.
+    name: inputShippingAddress.name, 
+    state: inputShippingAddress.state,
+    
+    // Map your fields to the model's required fields
+    street: inputShippingAddress.address, // maps 'address' to 'street'
+    zipCode: inputShippingAddress.postalCode, // maps 'postalCode' to 'zipCode'
+    
+    // Use the phoneNumber from the root body for the shipping address phone
+    phone: phoneNumber, 
+    city: inputShippingAddress.city,
+    country: inputShippingAddress.country || 'Kenya',
+  };
+
+
+  // 3. Get user's cart and validate
   const cart = await Cart.findOne({ user: userId });
   if (!cart || cart.items.length === 0) {
     throw new AppError('Cart is empty. Cannot checkout.', 400);
   }
 
-  // 2. Data Validation specific to M-Pesa
+  // 4. Data Validation specific to M-Pesa
   const totalAmount = cart.totalAmount;
 
   if (paymentMethod === PaymentMethod.MPESA) {
-    if (!phoneNumber && !req.user!.phone) {
-      throw new AppError('M-Pesa payment requires a registered phone number in the request body or user profile.', 400);
-    }
+    // Note: We already checked phoneNumber is available in step 2 (mapping to shippingAddress.phone)
     if (totalAmount <= 1) {
         throw new AppError('Minimum checkout amount for M-Pesa is KES 1.', 400);
     }
   }
 
-  // 3. Create Order Document (Snapshot of cart and set initial status)
+  // 5. Create Order Document (Snapshot of cart and set initial status)
   const order = await Order.create({
     user: userId,
     items: cart.items,
     totalAmount,
-    shippingAddress,
-    paymentMethod,
+    shippingAddress, // Use the mapped object
+    paymentMethod, // Use the validated/mapped method
     notes,
     orderNumber: 'TEMP', 
     orderStatus: paymentMethod === PaymentMethod.MPESA ? OrderStatus.PENDING_PAYMENT : OrderStatus.PLACED,
@@ -80,7 +110,7 @@ export const checkoutCart = asyncHandler(async (req: AuthRequest, res: Response)
 
   let paymentDetails = null;
 
-  // 4. Initiate M-Pesa Payment
+  // 6. Initiate M-Pesa Payment
   if (paymentMethod === PaymentMethod.MPESA) {
     try {
       const phoneForStk = phoneNumber || req.user!.phone;
@@ -99,7 +129,7 @@ export const checkoutCart = asyncHandler(async (req: AuthRequest, res: Response)
         CheckoutRequestID: paymentResult.CheckoutRequestID,
         MerchantRequestID: paymentResult.MerchantRequestID,
         ResponseCode: paymentResult.ResponseCode,
-        CustomerMessage: paymentResult.CustomerMessage
+        CustomerMessage: paymentResult.ResponseCode === '0' ? 'Success. Check your phone for the M-Pesa prompt.' : paymentResult.CustomerMessage
       };
 
       console.log(`📲 M-Pesa STK Push initiated successfully for Order ${order._id}`);
@@ -115,7 +145,7 @@ export const checkoutCart = asyncHandler(async (req: AuthRequest, res: Response)
     await cart.clearCart();
   }
 
-  // 5. Respond
+  // 7. Respond
   res.status(201).json({ 
     success: true, 
     message: paymentMethod === PaymentMethod.MPESA 
