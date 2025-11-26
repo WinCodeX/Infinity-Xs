@@ -1,15 +1,16 @@
-// src/controllers/order.controller.ts (New Function: placeOrder)
+// src/controllers/order.controller.ts
 
-import { Response } from 'express';
+import { Response, Request } from 'express';
+// Note: Assuming these types, models, and middleware exist and are correctly configured.
 import { AuthRequest, OrderStatus, PaymentMethod } from '../types';
 import Order from '../models/Order.model';
 import Cart from '../models/Cart.model';
 import { asyncHandler, AppError } from '../middleware/error.middleware';
 
-// **NOTE:** You will need to create and import this file later
-import { initiateMpesaStkPush } from '../services/mpesa.service'; 
+// **NOTE:** Using .js extension for module resolution safety
+import { initiateMpesaStkPush } from '../services/mpesa.service.js'; 
 
-// @desc    Place a new order (Checkout)
+// @desc    Place a new order (Checkout from Cart)
 // @route   POST /api/orders
 // @access  Private
 export const placeOrder = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -32,10 +33,11 @@ export const placeOrder = asyncHandler(async (req: AuthRequest, res: Response) =
   const totalAmount = cart.totalAmount;
 
   if (paymentMethod === PaymentMethod.MPESA) {
-    if (!phoneNumber || !req.user!.phone) {
-      throw new AppError('M-Pesa payment requires a registered phone number.', 400);
+    // If phone number is not provided in body, check the authenticated user object
+    if (!phoneNumber && !req.user!.phone) {
+      throw new AppError('M-Pesa payment requires a registered phone number in the request body or user profile.', 400);
     }
-    // M-Pesa often requires amounts > 1 KES
+    // M-Pesa minimum amount check
     if (totalAmount <= 1) {
         throw new AppError('Minimum order amount for M-Pesa is KES 1.', 400);
     }
@@ -49,7 +51,7 @@ export const placeOrder = asyncHandler(async (req: AuthRequest, res: Response) =
     shippingAddress,
     paymentMethod,
     notes,
-    orderNumber: 'TEMP', // Let pre-save hook handle this
+    orderNumber: 'TEMP', // Assuming a pre-save hook generates the final number
     // Set initial status based on payment method
     orderStatus: paymentMethod === PaymentMethod.MPESA ? OrderStatus.PENDING_PAYMENT : OrderStatus.PLACED,
   });
@@ -59,22 +61,26 @@ export const placeOrder = asyncHandler(async (req: AuthRequest, res: Response) =
   // 4. Initiate M-Pesa Payment
   if (paymentMethod === PaymentMethod.MPESA) {
     try {
+      // Use phone from body first, then fallback to user profile phone
+      const phoneForStk = phoneNumber || req.user!.phone;
+      
       paymentResult = await initiateMpesaStkPush(
         totalAmount, 
-        phoneNumber || req.user!.phone, // Use user phone or body phone
+        phoneForStk, 
         order._id.toString()
       );
       
-      // Update order with M-Pesa details (e.g., CheckoutRequestID)
+      // Save the M-Pesa Checkout Request ID for tracking callbacks
       order.mpesaCheckoutId = paymentResult.CheckoutRequestID; 
       await order.save();
       
       console.log(`📲 M-Pesa STK Push initiated successfully for Order ${order._id}`);
 
     } catch (error) {
-      // If payment initiation fails, log and throw error, or mark order as FAILED
-      await Order.findByIdAndDelete(order._id); // Clean up the failed order
-      throw new AppError('Failed to initiate M-Pesa payment. Please try again.', 500);
+      // If payment initiation fails, clean up the failed order document
+      await Order.findByIdAndDelete(order._id); 
+      console.error('M-Pesa STK Initiation Failed:', error);
+      throw new AppError('Failed to initiate M-Pesa payment. Please check logs for details.', 500);
     }
   }
 
@@ -91,3 +97,18 @@ export const placeOrder = asyncHandler(async (req: AuthRequest, res: Response) =
     }
   });
 });
+
+
+// @desc    Receives the final payment status from M-Pesa API (Callback)
+// @route   POST /api/orders/callback
+// @access  Public (Called by M-Pesa servers, MUST be public)
+export const mpesaCallback = asyncHandler(async (req: Request, res: Response) => {
+    // This is a minimal stub to ensure the route exists and returns 200 OK.
+    // Full implementation requires parsing complex M-Pesa JSON and updating the Order.
+    console.log('M-Pesa Callback received:', req.body);
+    
+    // CRITICAL: Must return 200 OK immediately to M-Pesa to prevent retries.
+    res.status(200).send('Callback received and acknowledged.');
+});
+
+// NOTE: We no longer need 'createOrder' or 'checkoutOrder' as 'placeOrder' handles checkout.
