@@ -2,13 +2,12 @@
 
 import { Response, Request } from 'express';
 // Note: Assuming these types, models, and middleware exist and are correctly configured.
-// NOTE: We assume 'types' is in the project root, so we don't force .js extension for non-relative paths
 import { AuthRequest, OrderStatus, PaymentMethod } from '../types'; 
 import Order from '../models/Order.model';
 import Cart from '../models/Cart.model';
 import { asyncHandler, AppError } from '../middleware/error.middleware';
 
-// **FIX: Explicitly use .js extension** for relative path imports
+// **FIX: Explicitly use .js extension**
 import { initiateMpesaStkPush } from '../services/mpesa.service.js'; 
 
 // @desc    Place a new order (Checkout from Cart)
