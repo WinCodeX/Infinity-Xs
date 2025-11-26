@@ -2,8 +2,8 @@
 
 import express from 'express';
 // **FIX: Explicitly use .js extension**
-import { placeOrder, mpesaCallback } from '../controllers/order.controller.js';
-import { protect } from '../middleware/auth.middleware.js';
+import { placeOrder, mpesaCallback } from '../controllers/order.controller';
+import { protect } from '../middleware/auth.middleware';
 
 const router = express.Router();
 
