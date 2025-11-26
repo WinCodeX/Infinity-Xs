@@ -6,8 +6,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 
 // --- CONFIG & UTILITIES ---
-// FIX: Added .js extension to resolve TS2307 compilation error
-import { connectDB } from './config/database.js'; 
+import { connectDB } from './config/database'; 
 import { AppError } from './middleware/error.middleware'; 
 
 // --- ROUTE IMPORTS (MUST BE AT THE TOP) ---
