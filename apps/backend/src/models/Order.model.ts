@@ -8,6 +8,7 @@
  */
 
 import mongoose, { Schema, Model } from 'mongoose';
+import { NextFunction } from 'express';
 import { IOrder, OrderStatus, PaymentMethod, ICartItem } from '../types';
 
 /**
@@ -175,7 +176,7 @@ OrderSchema.index({ transactionId: 1 });
  * Automatically generates a unique order number
  * Only runs when creating a new order (not on updates)
  */
-OrderSchema.pre('save', async function (next) {
+OrderSchema.pre<IOrder>('save', async function (next: NextFunction) {
   // Only generate order number for new documents
   if (!this.isNew) {
     return next();

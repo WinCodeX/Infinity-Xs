@@ -2,7 +2,7 @@
 import mongoose, { Schema, Model } from 'mongoose';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { IUser, UserRole, JWTPayload } from '../types';
+import { IUser, UserRole, JwtPayload } from '../types';
 
 const UserSchema = new Schema<IUser>(
   {
@@ -72,13 +72,13 @@ UserSchema.methods.generateAuthToken = function (): string {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is not defined');
 
-  const payload: JWTPayload = {
+  const payload: JwtPayload = {
     userId: this._id.toString(),
     email: this.email,
     role: this.role,
   };
 
-  return jwt.sign(payload, secret, { expiresIn: process.env.JWT_EXPIRE || '7d' });
+  return jwt.sign(payload, secret, { expiresIn: process.env.JWT_EXPIRE || '7d' } as any);
 };
 
 const User: Model<IUser> = mongoose.model<IUser>('User', UserSchema);

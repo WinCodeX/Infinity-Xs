@@ -1,5 +1,6 @@
 import { Request } from "express";
-import { Document } from "mongoose";
+import { Document, Types } from "mongoose";
+import type { Multer } from "multer";
 
 export enum UserRole {
     CUSTOMER = 'customer',
@@ -8,7 +9,7 @@ export enum UserRole {
 }
 
 export interface IUser extends Document {
-    _id: string;
+    _id: Types.ObjectId;
     email: string;
     password?: string;
     name: string;
@@ -46,7 +47,7 @@ export enum ServiceType {
 }
 
 export interface IProduct extends Document {
-    _id: string;
+    _id: Types.ObjectId;
     name: string;
     description: string;
     category: ProductCategory;
@@ -63,22 +64,22 @@ export interface IProduct extends Document {
         duration?: string;
         [key: string]: any;
     };
-    createdBy: IUser['_id'];
+    createdBy: Types.ObjectId;
     createdAt: Date;
     updatedAt: Date;
 }
 
 export interface ICartItem {
-    product: IProduct['_id'];
+    product: Types.ObjectId;
     quantity: number;
     size?: string;
     color?: string;
     price: number;
- }
+}
 
 export interface ICart extends Document {
-    _id: string;
-    user: IUser['_id'];
+    _id: Types.ObjectId;
+    user: Types.ObjectId;
     items: ICartItem[];
     totalAmount: number;
     createdAt: Date;
@@ -102,9 +103,9 @@ export enum PaymentMethod {
 }
 
 export interface IOrder extends Document {
-    _id: string;
+    _id: Types.ObjectId;
     orderNumber: string;
-    user: IUser['_id'];
+    user: Types.ObjectId;
     items: ICartItem[];
     totalAmount: number;
     status: OrderStatus;
@@ -126,7 +127,7 @@ export interface IOrder extends Document {
 }
 
 export interface IServiceShowcase extends Document {
-    _id: string;
+    _id: Types.ObjectId;
     title: string;
     description: string;
     serviceType: ServiceType;
@@ -176,6 +177,7 @@ export interface JwtPayload {
     email: string;
     role: UserRole;
 }
+
 export interface QueryParams {
     page?: number;
     limit?: number;

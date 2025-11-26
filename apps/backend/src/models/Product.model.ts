@@ -165,7 +165,7 @@ ProductSchema.virtual('isInStock').get(function (this: IProduct) {
     return true;
   }
   // Physical products must have stock > 0
-  return this.stock > 0;
+  return this.stock != null && this.stock > 0;
 });
 
 /**
@@ -200,7 +200,7 @@ ProductSchema.methods.decreaseStock = async function (
   }
 
   // Check if enough stock is available
-  if (this.stock < quantity) {
+  if (this.stock == null || this.stock < quantity) {
     return false;
   }
 
@@ -226,8 +226,10 @@ ProductSchema.methods.increaseStock = async function (
     return;
   }
 
-  this.stock += quantity;
-  await this.save();
+  if (this.stock != null) {
+    this.stock += quantity;
+    await this.save();
+  }
 };
 
 /**
@@ -253,13 +255,12 @@ ProductSchema.statics.getFeaturedProducts = async function (
  * 
  * Validates business rules before saving
  */
-ProductSchema.pre('save', function (next) {
+ProductSchema.pre('save', function () {
   // Services should have stock set to -1 (unlimited)
   if (this.category === ProductCategory.SERVICES && this.stock !== -1) {
     this.stock = -1;
   }
-
-  next();
+  // No need to call next() if not using it
 });
 
 /**
