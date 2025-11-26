@@ -1,22 +1,10 @@
 // src/controllers/auth.controller.ts
 
-/**
- * Authentication Controllers
- * * Handles user registration, login, and profile management
- * Controllers contain the business logic for each route
- */
-
 import { Response } from 'express';
-// Assuming AuthRequest and AppError are defined in '../types' or similar
-// Assuming IUserDocument is defined to include custom methods (comparePassword, generateAuthToken)
-import { AuthRequest, IUserDocument } from '../types'; 
-// We cast the imported default model to our custom UserModel type for type safety
-import User from '../models/User.model'; 
-import { asyncHandler, AppError } from '../middleware/error.middleware';
-import { Model } from 'mongoose'; 
-
-// Cast the imported model to a type that includes the custom instance methods
-const UserModel = User as unknown as Model<IUserDocument>;
+import { AuthRequest } from '../types';
+import User from '../models/User.model';
+import { asyncHandler } from '../middleware/error.middleware';
+import { AppError } from '../middleware/error.middleware';
 
 /**
  * @route   POST /api/auth/register
@@ -27,24 +15,25 @@ export const register = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
     const { email, password, name } = req.body;
 
-    // Check if user already exists
-    const existingUser = await UserModel.findOne({ email });
+    // 1. Check if user already exists
+    const existingUser = await User.findOne({ email });
 
     if (existingUser) {
       throw new AppError('User already exists with this email', 400);
     }
 
-    // Create new user (password auto-hashed by pre-save middleware)
-    const user = await UserModel.create({
+    // 2. Create new user
+    // The password hashing is handled by the model's pre-save middleware
+    const user = await User.create({
       email,
       password,
       name,
     });
 
-    // Generate JWT token
+    // 3. Generate Token
     const token = user.generateAuthToken();
 
-    // Send response
+    // 4. Send Response
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
@@ -62,8 +51,6 @@ export const register = asyncHandler(
   }
 );
 
----
-
 /**
  * @route   POST /api/auth/login
  * @desc    Login user
@@ -73,14 +60,18 @@ export const login = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
     const { email, password } = req.body;
 
-    // Find user and explicitly include password field
-    const user = await UserModel.findOne({ email }).select('+password');
+    if (!email || !password) {
+      throw new AppError('Please provide an email and password', 400);
+    }
+
+    // Explicitly select password since it's set to select: false in schema
+    const user = await User.findOne({ email }).select('+password');
 
     if (!user) {
       throw new AppError('Invalid email or password', 401);
     }
 
-    // Check if password matches (comparePassword is a custom instance method)
+    // Check if password matches
     const isPasswordValid = await user.comparePassword(password);
 
     if (!isPasswordValid) {
@@ -90,7 +81,7 @@ export const login = asyncHandler(
     // Generate token
     const token = user.generateAuthToken();
 
-    // Remove password from response (user.password is safely defined as optional in IUserDocument)
+    // Hide password in response
     user.password = undefined;
 
     res.status(200).json({
@@ -112,19 +103,15 @@ export const login = asyncHandler(
   }
 );
 
----
-
 /**
  * @route   GET /api/auth/me
  * @desc    Get current user profile
- * @access  Private (requires authentication)
+ * @access  Private
  */
 export const getMe = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
-    // req.user is correctly set by the protect middleware as IUserDocument
-    const user = req.user as IUserDocument;
-    
-    if (!user) {
+    // req.user is set by the protect middleware
+    if (!req.user) {
       throw new AppError('User not found', 404);
     }
 
@@ -133,22 +120,20 @@ export const getMe = asyncHandler(
       message: 'User profile retrieved',
       data: {
         user: {
-          _id: user._id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          avatar: user.avatar,
-          phone: user.phone,
-          address: user.address,
-          isEmailVerified: user.isEmailVerified,
-          createdAt: user.createdAt,
+          _id: req.user._id,
+          email: req.user.email,
+          name: req.user.name,
+          role: req.user.role,
+          avatar: req.user.avatar,
+          phone: req.user.phone,
+          address: req.user.address,
+          isEmailVerified: req.user.isEmailVerified,
+          createdAt: req.user.createdAt,
         },
       },
     });
   }
 );
-
----
 
 /**
  * @route   PUT /api/auth/update
@@ -157,32 +142,23 @@ export const getMe = asyncHandler(
  */
 export const updateProfile = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
-    const currentUser = req.user as IUserDocument;
-    
-    if (!currentUser) {
+    if (!req.user) {
       throw new AppError('User not found', 404);
     }
 
-    // Fields that can be updated
     const allowedUpdates = ['name', 'phone', 'address', 'avatar'];
-
-    // Filter request body to only include allowed fields
     const updates: any = {};
+
     Object.keys(req.body).forEach((key) => {
       if (allowedUpdates.includes(key)) {
         updates[key] = req.body[key];
       }
     });
 
-    // Update user
-    const user = await UserModel.findByIdAndUpdate(
-      currentUser._id,
-      updates,
-      {
-        new: true, // Return updated document
-        runValidators: true, // Run schema validators
-      }
-    );
+    const user = await User.findByIdAndUpdate(req.user._id, updates, {
+      new: true,
+      runValidators: true,
+    });
 
     if (!user) {
       throw new AppError('User not found', 404);
@@ -206,8 +182,6 @@ export const updateProfile = asyncHandler(
   }
 );
 
----
-
 /**
  * @route   PUT /api/auth/change-password
  * @desc    Change user password
@@ -216,35 +190,29 @@ export const updateProfile = asyncHandler(
 export const changePassword = asyncHandler(
   async (req: AuthRequest, res: Response): Promise<void> => {
     const { currentPassword, newPassword } = req.body;
-    const currentUser = req.user as IUserDocument;
 
-    if (!currentUser) {
+    if (!req.user) {
       throw new AppError('User not found', 404);
     }
 
-    // Get user with password explicitly selected
-    const user = await UserModel.findById(currentUser._id).select('+password');
+    const user = await User.findById(req.user._id).select('+password');
 
     if (!user || !user.password) {
-      // User must have a password to change it (i.e., not an OAuth user)
-      throw new AppError('Password not set for this account', 404);
+      throw new AppError('User not found or password not set', 404);
     }
 
-    // Verify current password
     const isPasswordValid = await user.comparePassword(currentPassword);
 
     if (!isPasswordValid) {
       throw new AppError('Current password is incorrect', 401);
     }
 
-    // Validate new password
     if (!newPassword || newPassword.length < 6) {
       throw new AppError('New password must be at least 6 characters', 400);
     }
 
-    // Update password
     user.password = newPassword;
-    await user.save(); // This triggers pre-save middleware to hash the new password
+    await user.save();
 
     res.status(200).json({
       success: true,
@@ -253,11 +221,9 @@ export const changePassword = asyncHandler(
   }
 );
 
----
-
 /**
  * @route   POST /api/auth/google
- * @desc    Google OAuth login/register
+ * @desc    Google OAuth placeholder
  * @access  Public
  */
 export const googleAuth = asyncHandler(
