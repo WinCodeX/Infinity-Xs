@@ -14,6 +14,9 @@ declare global {
 
 // Use existing global instance or create a new one
 export const prisma = global.prisma || new PrismaClient({
+  __internal: {
+        clientEngineType: 'library',
+  },
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
 });
 

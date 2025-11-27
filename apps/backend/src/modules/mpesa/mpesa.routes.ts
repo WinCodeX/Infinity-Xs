@@ -12,8 +12,8 @@ import {
   mpesaValidation,
   mpesaTimeout,
   checkOrderStatus,
-} from '../controllers/mpesa.controller';
-import { protect } from '../middleware/auth.middleware';
+} from './mpesa.controller';
+import { protect } from '../../middleware/auth.middleware';
 
 const router = Router();
 

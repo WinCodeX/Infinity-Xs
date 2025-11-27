@@ -15,9 +15,9 @@ import {
   updateProfile,
   changePassword,
   googleAuth,
-} from '../controllers/auth.controller';
-import { protect } from '../middleware/auth.middleware';
-import { validateRegister, validateLogin } from '../middleware/validate.middleware';
+} from '../auth/auth.controller';
+import { protect } from '../../middleware/auth.middleware';
+import { validateRegister, validateLogin } from '../../middleware/validate.middleware';
 
 /**
  * Create Router Instance

@@ -11,11 +11,11 @@
  */
 
 import { Request, Response } from 'express';
-import Order from '../models/Order.model';
-import Cart from '../models/Cart.model';
-import Product from '../models/Product.model';
-import { OrderStatus } from '../types';
-import { asyncHandler } from '../middleware/error.middleware';
+import Order from '../order/Order.model';
+import Cart from '../cart/Cart.model';
+import Product from '../product/Product.model';
+import { OrderStatus } from '../../types';
+import { asyncHandler } from '../../middleware/error.middleware';
 
 /**
  * M-Pesa Callback Data Interface

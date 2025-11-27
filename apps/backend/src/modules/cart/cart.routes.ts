@@ -14,9 +14,9 @@ import {
   removeFromCart,
   clearCart,
   checkoutCart,
-} from '../controllers/cart.controller';
-import { protect } from '../middleware/auth.middleware';
-import { validateAddToCart } from '../middleware/validate.middleware';
+} from '../cart/cart.controller';
+import { protect } from '../../middleware/auth.middleware';
+import { validateAddToCart } from '../../middleware/validate.middleware';
 
 const router = Router();
 

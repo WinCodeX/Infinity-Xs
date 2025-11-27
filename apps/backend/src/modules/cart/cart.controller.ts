@@ -7,12 +7,12 @@
  */
 
 import { Response } from 'express';
-import { AuthRequest, OrderStatus, PaymentMethod } from '../types';
-import Cart from '../models/Cart.model';
-import Product from '../models/Product.model';
-import Order from '../models/Order.model';
-import { asyncHandler, AppError } from '../middleware/error.middleware';
-import { initiateMpesaStkPush } from '../services/mpesa.service';
+import { AuthRequest, OrderStatus, PaymentMethod } from '../../types';
+import Cart from '../cart/Cart.model';
+import Product from '../product/Product.model';
+import Order from '../order/Order.model';
+import { asyncHandler, AppError } from '../../middleware/error.middleware';
+import { initiateMpesaStkPush } from '../../services/mpesa.service';
 
 /**
  * @route   POST /api/cart

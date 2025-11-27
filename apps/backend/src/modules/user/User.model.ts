@@ -2,7 +2,7 @@
 import mongoose, { Schema, Model } from 'mongoose';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { IUser, UserRole, JwtPayload } from '../types';
+import { IUser, UserRole, JwtPayload } from '../../types';
 
 const UserSchema = new Schema<IUser>(
   {

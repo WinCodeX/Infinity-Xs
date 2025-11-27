@@ -1,9 +1,8 @@
 // src/server.ts
 
 /**
- * Infinity Backend Server
- * 
- * Main entry point for the application
+ * Infinity Backend Server (Refactored for Prisma and Single-File Modules)
+ * * Main entry point for the application
  * Sets up Express server with all middleware and routes
  */
 
@@ -15,19 +14,18 @@ import helmet from 'helmet';
 // Load environment variables FIRST (before anything else)
 dotenv.config();
 
-// Config imports
-import { connectDB } from './config/database';
+// Config imports - IMPORTING PRISMA CONNECTION LOGIC
+import { connectDB, disconnectDB } from './config/database'; // Now handles Prisma connect/disconnect
 
 // Middleware imports
 import { AppError, notFound, errorHandler } from './middleware/error.middleware';
 
-// Route imports
-import authRoutes from './routes/auth.routes';
-import cartRoutes from './routes/cart.routes';
-import mpesaRoutes from './routes/mpesa.routes';
-// Uncomment these when you create the files:
-// import productRoutes from './routes/product.routes';
-// import orderRoutes from './routes/order.routes';
+// Route imports - IMPORTING FROM NEW MODULE STRUCTURE
+import authRoutes from './modules/auth/auth.route';
+import cartRoutes from './modules/cart/cart.routes';
+import mpesaRoutes from './modules/mpesa/mpesa.routes'; 
+import productRoutes from './modules/product/product.routes'; // Now using the new path
+import orderRoutes from './modules/order/order.routes';     // Now using the new path
 
 /**
  * Initialize Express Application
@@ -35,16 +33,15 @@ import mpesaRoutes from './routes/mpesa.routes';
 const app: Application = express();
 
 /**
- * Connect to MongoDB
- * This runs asynchronously but we don't await it here
- * The connection will establish in the background
+ * Connect to Database (Prisma Client)
+ * This connects the Prisma client to MongoDB.
+ * The connection is generally lazy, but connectDB() ensures logging/verification.
  */
-connectDB();
+connectDB(); // Now runs the Prisma connection check
 
 /**
  * MIDDLEWARE SETUP
- * 
- * Order matters! Middleware runs in the order it's registered
+ * * Order matters! Middleware runs in the order it's registered
  */
 
 // 1. Security Headers - Must be first
@@ -69,25 +66,27 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // 4. Request Logging (simple version)
 app.use((req: Request, res: Response, next: NextFunction) => {
-  console.log(`${req.method} ${req.path}`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`${req.method} ${req.path}`);
+  }
   next();
 });
 
 /**
  * ROUTES
- * 
- * All API endpoints are registered here
+ * * All API endpoints are registered here
  * Base path: /api
  */
 
 // Health Check - Test if server is running
 app.get('/api/health', (req: Request, res: Response) => {
+  // In a real application, you would check prisma.$queryRaw('SELECT 1') here
   res.status(200).json({
     success: true,
     message: 'Infinity Backend is running!',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    mongodb: 'Connected', // You could add actual connection check
+    database: 'Prisma/MongoDB Initialized',
   });
 });
 
@@ -97,7 +96,7 @@ app.get('/', (req: Request, res: Response) => {
     name: 'Infinity API',
     version: '1.0.0',
     message: 'Welcome to Infinity Backend API',
-    documentation: '/api/docs', // Future: Add API docs
+    documentation: '/api/docs',
     endpoints: {
       health: 'GET /api/health',
       auth: {
@@ -112,6 +111,14 @@ app.get('/', (req: Request, res: Response) => {
         remove: 'DELETE /api/cart/:productId',
         checkout: 'POST /api/cart/checkout',
       },
+      products: {
+        list: 'GET /api/products',
+        create: 'POST /api/products',
+      },
+      orders: {
+        view: 'GET /api/orders/:id',
+        list: 'GET /api/orders',
+      },
       payments: {
         mpesaCallback: 'POST /api/payments/mpesa/callback',
         orderStatus: 'GET /api/payments/order/:orderId/status',
@@ -124,16 +131,12 @@ app.get('/', (req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/payments/mpesa', mpesaRoutes);
-
-// Uncomment when you create these route files:
-// app.use('/api/products', productRoutes);
-// app.use('/api/orders', orderRoutes);
+app.use('/api/products', productRoutes); // Now active
+app.use('/api/orders', orderRoutes);     // Now active
 
 /**
  * ERROR HANDLING
- * 
- * These MUST come AFTER all routes
- * They catch any errors that weren't handled by route controllers
+ * * These MUST come AFTER all routes
  */
 
 // 404 Handler - Route Not Found
@@ -162,10 +165,8 @@ const server = app.listen(PORT, () => {
   ║   ✓ Auth     /api/auth                 ║
   ║   ✓ Cart     /api/cart                 ║
   ║   ✓ M-Pesa   /api/payments/mpesa       ║
-  ║                                        ║
-  ║   🔧 Coming Soon:                      ║
-  ║   ⏳ Products /api/products             ║
-  ║   ⏳ Orders   /api/orders               ║
+  ║   ✓ Products /api/products             ║
+  ║   ✓ Orders   /api/orders               ║
   ║                                        ║
   ╚════════════════════════════════════════╝
   `);
@@ -177,28 +178,29 @@ const server = app.listen(PORT, () => {
 
 /**
  * GRACEFUL SHUTDOWN
- * 
- * Handles server shutdown properly
- * Closes all connections before exiting
  */
-const gracefulShutdown = (signal: string) => {
+const gracefulShutdown = async (signal: string) => {
   console.log(`\n⚠️  ${signal} received. Starting graceful shutdown...`);
 
-  // Stop accepting new connections
+  // 1. Close HTTP server
   server.close((err) => {
     if (err) {
-      console.error('❌ Error during shutdown:', err);
+      console.error('❌ Error during HTTP server shutdown:', err);
       process.exit(1);
     }
-
     console.log('✅ HTTP server closed');
-    console.log('✅ All connections closed');
-    
-    // Close database connection
-    // mongoose.connection.close() would go here if needed
-    
-    process.exit(0);
   });
+
+  // 2. Close database connection (Prisma)
+  try {
+    await disconnectDB();
+    console.log('✅ Prisma connection closed');
+  } catch (dbError) {
+    console.error('❌ Error closing Prisma connection:', dbError);
+  }
+
+  // 3. Exit process
+  process.exit(0);
 
   // Force shutdown after 10 seconds
   setTimeout(() => {
@@ -220,9 +222,11 @@ process.on('uncaughtException', (error: Error) => {
 });
 
 // Handle unhandled promise rejections
-process.on('unhandledRejection', (reason: any) => {
+process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
   console.error('💥 UNHANDLED REJECTION! Shutting down...');
+  console.error('Promise:', promise);
   console.error('Reason:', reason);
+  
   server.close(() => {
     process.exit(1);
   });

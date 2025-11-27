@@ -10,7 +10,7 @@
 import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthRequest, JWTPayload, UserRole } from '../types';
-import User from '../models/User.model';
+import User from '../modules/user/User.model';
 
 /**
  * Protect Middleware

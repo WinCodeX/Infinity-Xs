@@ -2,19 +2,20 @@
 
 generator client {
   provider = "prisma-client-js"
+  
+  engineType = "library"
+  output = "../node_modules/@prisma/client"
 }
 
-// Ensure your MongoDB URI is correctly set in .env
+// NOTE: The 'url' is removed here because, as your comment suggests, 
+// it's being loaded from prisma.config.ts or the .env file. This structure is correct for Prisma 7+.
 datasource db {
   provider = "mongodb"
-  url      = env("MONGODB_URI")
 }
 
 // --------------------------------------------------
 // Enums
 // --------------------------------------------------
-
-// Enums remain correct for Prisma.
 
 enum UserRole {
   CUSTOMER
@@ -52,8 +53,14 @@ enum PaymentMethod {
   CASH
 }
 
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
 // --------------------------------------------------
-// Models (Fixed for MongoDB Relations)
+// Models
 // --------------------------------------------------
 
 model User {
@@ -65,12 +72,11 @@ model User {
   googleId          String?   @unique
   avatar            String?
   phone             String?
-  address           Address?  // Embedded document
+  address           Address?
   isEmailVerified   Boolean   @default(false)
   
-  // Relations: MongoDB uses explicit foreign keys on the referencing side.
-  // One-to-One: The Cart model holds the unique userId.
-  carts             Cart[]    // Changed to array because Cart model holds the relation key.
+  // Relations
+  carts             Cart[]
   orders            Order[]
   createdProducts   Product[] @relation("CreatedProducts")
   
@@ -81,37 +87,40 @@ model User {
   @@map("users")
 }
 
-// Embedded Document Type - This structure is correct.
+// Embedded Document Type for Address
 type Address {
   street  String?
   city    String?
   state   String?
   zipCode String?
-  country String? @default("Kenya")
+  country String  @default("Kenya")
 }
 
 model Product {
-  id              String          @id @default(auto()) @map("_id") @db.ObjectId
-  name            String
-  description     String
-  category        ProductCategory
-  serviceType     ServiceType?
-  price           Float
-  images          String[]
-  stock           Int
-  sizes           String[]?
-  colors          String[]?
-  isActive        Boolean         @default(true)
-  featured        Boolean         @default(false)
-  metadata        Json?
+  id                String          @id @default(auto()) @map("_id") @db.ObjectId
+  name              String
+  description       String
+  category          ProductCategory
+  serviceType       ServiceType?
+  price             Float
+  
+  // Arrays are correctly non-optional (String[])
+  images            String[]
+  stock             Int
+  sizes             String[]
+  colors            String[]
+  
+  isActive          Boolean         @default(true)
+  featured          Boolean         @default(false)
+  metadata          Json?
   
   // Relations
-  createdBy       User            @relation("CreatedProducts", fields: [createdById], references: [id])
-  createdById     String          @db.ObjectId // Foreign Key
+  createdBy         User            @relation("CreatedProducts", fields: [createdById], references: [id], onDelete: Cascade)
+  createdById       String          @db.ObjectId
   
   // Timestamps
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
   
   @@map("products")
 }
@@ -119,63 +128,64 @@ model Product {
 model Cart {
   id                String    @id @default(auto()) @map("_id") @db.ObjectId
   
-  // Relations: One-to-One relationship (User:Cart)
-  user              User      @relation(fields: [userId], references: [id])
-  userId            String    @unique @db.ObjectId // Foreign Key (Must be unique for 1:1)
+  // One-to-one relation enforced by @@unique([userId])
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            String    @db.ObjectId
   
-  // CartItem is an embedded document type
-  // Prisma correctly handles this as an array of embedded objects.
-  items             CartItem[] 
-  
-  totalAmount       Float
+  items             CartItem[]
+  totalAmount       Float     @default(0)
   
   // Timestamps
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   
+  // Enforces a logical One-to-One relationship (one active cart per user)
+  @@unique([userId]) 
   @@map("carts")
 }
 
-// Embedded Document Type - This structure is correct for nesting in Cart and Order.
+// Embedded Document Type for Cart Items
 type CartItem {
-  // NOTE: This is NOT a model, so it can't be queried directly.
-  // It only exists inside Cart/Order documents.
-  productId         String    @db.ObjectId // Reference to Product ID
-  quantity          Int
-  size              String?
-  color             String?
-  price             Float
+  productId String  @db.ObjectId
+  quantity  Int
+  size      String?
+  color     String?
+  price     Float
 }
 
 model Order {
-  id                String    @id @default(auto()) @map("_id") @db.ObjectId
-  orderNumber       String    @unique
+  id                String          @id @default(auto()) @map("_id") @db.ObjectId
+  orderNumber       String          @unique // UNIQUE INDEX CREATED HERE - NO @@index needed
   
   // Relations
-  user              User      @relation(fields: [userId], references: [id])
-  userId            String    @db.ObjectId // Foreign Key
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            String          @db.ObjectId
   
-  // Embedded document type
-  items             CartItem[] 
+  // Embedded details
+  items             CartItem[]
   totalAmount       Float
-  status            OrderStatus @default(PENDING)
-  paymentMethod     PaymentMethod
-  paymentStatus     String 
-  transactionId     String?
-  
-  // FIX: Added M-Pesa fields from your types/index.ts
-  mpesaCheckoutId   String?
-  mpesaReceiptNumber String?
-  
-  // Embedded document type
-  shippingAddress   Address 
+  shippingAddress   Address
   notes             String?
   trackingNumber    String?
   
+  // Status and Payment
+  status            OrderStatus     @default(PENDING)
+  paymentMethod     PaymentMethod
+  paymentStatus     PaymentStatus   @default(PENDING)
+  transactionId     String?
+  mpesaCheckoutId   String?
+  mpesaReceiptNumber String?
+  
   // Timestamps
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
   deliveredAt       DateTime?
+  
+  // Indexes: Only explicitly create indexes for fields that are NOT @unique
+  @@index([userId])
+  @@index([status])
+  @@index([paymentStatus])
+  // REMOVED: @@index([orderNumber]) - This was redundant due to @unique above.
   
   @@map("orders")
 }
