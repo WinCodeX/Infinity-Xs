@@ -1,7 +1,6 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "type": "module",
   "description": "Infinity Backend API - E-commerce and Service Management",
   "main": "dist/server.js",
   "scripts": {
@@ -22,6 +21,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.937.0",
     "@aws-sdk/s3-request-presigner": "^3.937.0",
+    "@prisma/client": "^7.0.1",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.8.0",
@@ -34,7 +34,8 @@
     "mongoose": "^9.0.0",
     "multer": "^2.0.2",
     "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0"
+    "passport-google-oauth20": "^2.0.0",
+    "prisma": "^7.0.1"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
@@ -48,6 +49,7 @@
     "@types/passport-google-oauth20": "^2.0.17",
     "dotenv": "^17.2.3",
     "nodemon": "^3.1.11",
+    "rimraf": "^6.1.2",
     "ts-node": "^10.9.2",
     "typescript": "~5.9.3"
   }

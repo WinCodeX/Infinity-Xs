@@ -1,60 +1,152 @@
 // src/services/mpesa.service.ts
 
-import axios from 'axios';
-import dotenv from 'dotenv';
+/**
+ * M-Pesa Integration Service - FIXED VERSION
+ * 
+ * Handles M-Pesa STK Push (Lipa Na M-Pesa Online) payments
+ * Uses Safaricom Daraja API
+ * 
+ * IMPORTANT SETUP NOTES:
+ * 1. Register at https://developer.safaricom.co.ke
+ * 2. Create an app to get Consumer Key and Secret
+ * 3. Use SANDBOX for testing (real phone numbers work in sandbox)
+ * 4. For production, get production credentials
+ */
+
+import axios, { AxiosError } from 'axios';
 import { AppError } from '../middleware/error.middleware';
 
-// Load environment variables for M-Pesa keys
-dotenv.config();
-
-// --- CONFIGURATION ---
-const CONSUMER_KEY = process.env.MPESA_CONSUMER_KEY;
-const CONSUMER_SECRET = process.env.MPESA_CONSUMER_SECRET;
-const PASSKEY = process.env.MPESA_PASSKEY;
-const SHORTCODE = process.env.MPESA_LIPA_NA_MPESA_SHORTCODE;
-const CALLBACK_URL = process.env.MPESA_CALLBACK_URL;
-
-// Base URLs (using sandbox for development)
-const BASE_URL = 'https://sandbox.safaricom.co.ke';
-// Change to 'https://api.safaricom.co.ke' for production
+/**
+ * M-Pesa Configuration
+ * All credentials come from environment variables
+ */
+const MPESA_CONFIG = {
+  consumerKey: process.env.MPESA_CONSUMER_KEY || '',
+  consumerSecret: process.env.MPESA_CONSUMER_SECRET || '',
+  passkey: process.env.MPESA_PASSKEY || '',
+  shortcode: process.env.MPESA_LIPA_NA_MPESA_SHORTCODE || '',
+  callbackUrl: process.env.MPESA_CALLBACK_URL || '',
+  environment: process.env.MPESA_ENVIRONMENT || 'sandbox', // 'sandbox' or 'production'
+};
 
 /**
- * Generates the M-Pesa API access token.
- * This token is required for all subsequent Daraja API calls.
- * @returns {Promise<string>} The Daraja API access token.
+ * Get Base URL based on environment
  */
-export async function getAccessToken(): Promise<string> {
-  if (!CONSUMER_KEY || !CONSUMER_SECRET) {
-    throw new Error('M-Pesa API keys are missing in environment variables.');
+const getBaseUrl = (): string => {
+  return MPESA_CONFIG.environment === 'production'
+    ? 'https://api.safaricom.co.ke'
+    : 'https://sandbox.safaricom.co.ke';
+};
+
+/**
+ * Validate M-Pesa Configuration
+ * Checks if all required environment variables are set
+ */
+const validateMpesaConfig = (): void => {
+  const requiredFields = [
+    'consumerKey',
+    'consumerSecret',
+    'passkey',
+    'shortcode',
+    'callbackUrl',
+  ];
+
+  const missingFields = requiredFields.filter(
+    (field) => !MPESA_CONFIG[field as keyof typeof MPESA_CONFIG]
+  );
+
+  if (missingFields.length > 0) {
+    throw new AppError(
+      `M-Pesa configuration incomplete. Missing: ${missingFields.join(', ')}. Check your .env file.`,
+      500
+    );
   }
 
+  // Validate callback URL format
+  if (!MPESA_CONFIG.callbackUrl.startsWith('http')) {
+    throw new AppError(
+      'MPESA_CALLBACK_URL must be a valid URL starting with http or https',
+      500
+    );
+  }
+
+  console.log('✅ M-Pesa configuration validated');
+};
+
+/**
+ * Get M-Pesa Access Token
+ * 
+ * Access tokens expire after 1 hour
+ * For production, implement token caching to avoid unnecessary requests
+ * 
+ * @returns Access token string
+ */
+export const getAccessToken = async (): Promise<string> => {
   try {
-    const authString = Buffer.from(`${CONSUMER_KEY}:${CONSUMER_SECRET}`).toString('base64');
-    
-    const response = await axios.get(`${BASE_URL}/oauth/v1/generate?grant_type=client_credentials`, {
+    // Validate config before making request
+    validateMpesaConfig();
+
+    // Create Basic Auth header
+    const auth = Buffer.from(
+      `${MPESA_CONFIG.consumerKey}:${MPESA_CONFIG.consumerSecret}`
+    ).toString('base64');
+
+    const url = `${getBaseUrl()}/oauth/v1/generate?grant_type=client_credentials`;
+
+    console.log('🔐 Requesting M-Pesa access token...');
+
+    const response = await axios.get(url, {
       headers: {
-        'Authorization': `Basic ${authString}`,
+        Authorization: `Basic ${auth}`,
       },
+      timeout: 30000, // 30 second timeout
     });
 
-    if (response.data && response.data.access_token) {
-      return response.data.access_token;
+    if (!response.data || !response.data.access_token) {
+      throw new Error('No access token in response');
     }
-    throw new AppError('Failed to retrieve M-Pesa access token.', 500);
+
+    console.log('✅ M-Pesa access token obtained');
+    return response.data.access_token;
 
   } catch (error) {
-    // Log the underlying API error for debugging
-    console.error('M-Pesa Token Error:', axios.isAxiosError(error) ? error.response?.data : error);
-    throw new AppError('M-Pesa authentication failed.', 500);
-  }
-}
+    console.error('❌ M-Pesa Access Token Error:');
+    
+    if (axios.isAxiosError(error)) {
+      const axiosError = error as AxiosError;
+      console.error('Status:', axiosError.response?.status);
+      console.error('Data:', axiosError.response?.data);
+      console.error('Message:', axiosError.message);
 
+      // Check for common errors
+      if (axiosError.response?.status === 401) {
+        throw new AppError(
+          'M-Pesa authentication failed. Check your Consumer Key and Secret in .env',
+          500
+        );
+      }
+
+      if (axiosError.code === 'ECONNREFUSED') {
+        throw new AppError('Cannot connect to M-Pesa API. Check your internet connection.', 500);
+      }
+
+      if (axiosError.code === 'ETIMEDOUT') {
+        throw new AppError('M-Pesa API request timeout. Please try again.', 500);
+      }
+    }
+
+    throw new AppError('Failed to get M-Pesa access token. Check server logs.', 500);
+  }
+};
 
 /**
- * Generates the M-Pesa Security Timestamp (YYYYMMDDHHmmss).
- * @returns {string} The timestamp string.
+ * Generate Timestamp in M-Pesa Format
+ * Format: YYYYMMDDHHmmss
+ * Example: 20241126143022
+ * 
+ * @returns Timestamp string
  */
-function getTimestamp(): string {
+const getTimestamp = (): string => {
   const date = new Date();
   const year = date.getFullYear().toString();
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -62,74 +154,287 @@ function getTimestamp(): string {
   const hour = date.getHours().toString().padStart(2, '0');
   const minute = date.getMinutes().toString().padStart(2, '0');
   const second = date.getSeconds().toString().padStart(2, '0');
-  return year + month + day + hour + minute + second;
-}
+
+  return `${year}${month}${day}${hour}${minute}${second}`;
+};
 
 /**
- * Initiates an M-Pesa STK Push transaction (Lipa Na M-Pesa Online).
- * @param {number} amount - The amount to be paid.
- * @param {string} phone - The customer's M-Pesa registered phone number (format: 2547...).
- * @param {string} orderId - Unique identifier for the transaction (used in callback).
- * @returns {Promise<any>} The response data from the Daraja API.
+ * Generate M-Pesa Password
+ * Password = Base64(Shortcode + Passkey + Timestamp)
+ * 
+ * @param timestamp Current timestamp
+ * @returns Base64 encoded password
  */
-export async function initiateMpesaStkPush(
-  amount: number, 
-  phone: string, 
-  orderId: string
-): Promise<any> {
-  
-  if (!PASSKEY || !SHORTCODE || !CALLBACK_URL) {
-    throw new Error('M-Pesa STK Push configuration (PASSKEY, SHORTCODE, or CALLBACK_URL) is missing.');
+const generatePassword = (timestamp: string): string => {
+  const data = `${MPESA_CONFIG.shortcode}${MPESA_CONFIG.passkey}${timestamp}`;
+  return Buffer.from(data).toString('base64');
+};
+
+/**
+ * Format Phone Number for M-Pesa
+ * Converts various formats to M-Pesa format (254...)
+ * 
+ * Examples:
+ * - 0712345678 → 254712345678
+ * - 712345678 → 254712345678
+ * - 254712345678 → 254712345678
+ * - +254712345678 → 254712345678
+ * 
+ * @param phone Phone number
+ * @returns Formatted phone number
+ */
+const formatPhoneNumber = (phone: string): string => {
+  // Remove spaces, dashes, and parentheses
+  let cleaned = phone.replace(/[\s\-\(\)]/g, '');
+
+  // Remove leading +
+  if (cleaned.startsWith('+')) {
+    cleaned = cleaned.substring(1);
   }
 
-  // 1. Get Access Token
-  const token = await getAccessToken();
+  // Remove leading 0 and add 254
+  if (cleaned.startsWith('0')) {
+    cleaned = '254' + cleaned.substring(1);
+  }
 
-  // 2. Generate required security parameters
-  const timestamp = getTimestamp();
-  const password = Buffer.from(SHORTCODE + PASSKEY + timestamp).toString('base64');
+  // Add 254 if not present
+  if (!cleaned.startsWith('254')) {
+    cleaned = '254' + cleaned;
+  }
 
-  // Format phone number to 2547...
-  const formattedPhone = phone.startsWith('0') ? `254${phone.substring(1)}` : phone;
+  return cleaned;
+};
 
-  // 3. Construct the STK Push payload
-  const payload = {
-    BusinessShortCode: SHORTCODE,
-    Password: password,
-    Timestamp: timestamp,
-    TransactionType: 'CustomerPayBillOnline', // Or 'CustomerBuyGoodsOnline'
-    Amount: Math.ceil(amount), // Amount must be an integer for Daraja API
-    PartyA: formattedPhone, // Customer phone number
-    PartyB: SHORTCODE,
-    PhoneNumber: formattedPhone,
-    CallBackURL: CALLBACK_URL,
-    AccountReference: orderId, // Used to link the payment back to your internal order
-    TransactionDesc: `Payment for Order #${orderId}`,
-  };
+/**
+ * Validate Phone Number
+ * Ensures phone number is valid Kenyan format
+ * 
+ * @param phone Phone number
+ */
+const validatePhoneNumber = (phone: string): void => {
+  const formatted = formatPhoneNumber(phone);
 
-  // 4. Send the request
+  // Should be 12 digits (254 + 9 digits)
+  if (formatted.length !== 12) {
+    throw new AppError(
+      `Invalid phone number format: ${phone}. Must be a valid Kenyan number.`,
+      400
+    );
+  }
+
+  // Should start with 254
+  if (!formatted.startsWith('254')) {
+    throw new AppError(
+      `Phone number must be a Kenyan number starting with 254 or 0.`,
+      400
+    );
+  }
+};
+
+/**
+ * Initiate M-Pesa STK Push
+ * 
+ * Sends payment request to customer's phone
+ * Customer enters M-Pesa PIN to complete payment
+ * 
+ * FLOW:
+ * 1. Get access token
+ * 2. Format phone number
+ * 3. Generate password and timestamp
+ * 4. Send STK Push request
+ * 5. Customer receives prompt on phone
+ * 6. M-Pesa calls your callback URL with result
+ * 
+ * @param amount Amount in KES (minimum 1)
+ * @param phone Customer phone number
+ * @param orderId Your order reference
+ * @returns STK Push response
+ */
+export const initiateMpesaStkPush = async (
+  amount: number,
+  phone: string,
+  orderId: string
+): Promise<any> => {
   try {
-    const response = await axios.post(`${BASE_URL}/mpesa/stkpush/v1/processrequest`, payload, {
+    console.log('📱 Initiating M-Pesa STK Push...');
+    console.log('Amount:', amount);
+    console.log('Phone:', phone);
+    console.log('Order ID:', orderId);
+
+    // Validate configuration
+    validateMpesaConfig();
+
+    // Validate and format phone number
+    validatePhoneNumber(phone);
+    const formattedPhone = formatPhoneNumber(phone);
+    console.log('Formatted Phone:', formattedPhone);
+
+    // Validate amount
+    if (amount < 1) {
+      throw new AppError('Amount must be at least KES 1', 400);
+    }
+
+    // Round amount to integer (M-Pesa doesn't accept decimals)
+    const roundedAmount = Math.ceil(amount);
+
+    // Get access token
+    const accessToken = await getAccessToken();
+
+    // Generate security credentials
+    const timestamp = getTimestamp();
+    const password = generatePassword(timestamp);
+
+    console.log('Timestamp:', timestamp);
+    console.log('Shortcode:', MPESA_CONFIG.shortcode);
+
+    // Construct STK Push payload
+    const payload = {
+      BusinessShortCode: MPESA_CONFIG.shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      TransactionType: 'CustomerPayBillOnline', // For PayBill
+      // Use 'CustomerBuyGoodsOnline' for Till Number
+      Amount: roundedAmount,
+      PartyA: formattedPhone, // Customer phone
+      PartyB: MPESA_CONFIG.shortcode, // Your business shortcode
+      PhoneNumber: formattedPhone, // Customer phone
+      CallBackURL: MPESA_CONFIG.callbackUrl,
+      AccountReference: orderId, // Your order reference
+      TransactionDesc: `Payment for Order ${orderId}`,
+    };
+
+    console.log('STK Push Payload:', JSON.stringify(payload, null, 2));
+
+    // Send STK Push request
+    const url = `${getBaseUrl()}/mpesa/stkpush/v1/processrequest`;
+
+    const response = await axios.post(url, payload, {
       headers: {
-        'Authorization': `Bearer ${token}`,
+        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
+      timeout: 60000, // 60 second timeout
     });
 
-    // Check for specific M-Pesa errors (e.g., when the request is accepted but failed)
-    if (response.data.ResponseCode && response.data.ResponseCode !== '0') {
-      console.error('M-Pesa STK Error:', response.data.ResponseDescription);
-      throw new AppError(response.data.CustomerMessage || 'M-Pesa request failed.', 400);
+    console.log('M-Pesa Response:', JSON.stringify(response.data, null, 2));
+
+    // Check response code
+    if (response.data.ResponseCode === '0') {
+      console.log('✅ STK Push sent successfully');
+      return {
+        success: true,
+        CheckoutRequestID: response.data.CheckoutRequestID,
+        MerchantRequestID: response.data.MerchantRequestID,
+        ResponseCode: response.data.ResponseCode,
+        ResponseDescription: response.data.ResponseDescription,
+        CustomerMessage: response.data.CustomerMessage || 'Payment request sent. Check your phone.',
+      };
+    } else {
+      console.error('❌ M-Pesa returned error code:', response.data.ResponseCode);
+      throw new AppError(
+        response.data.CustomerMessage || response.data.ResponseDescription || 'M-Pesa request failed',
+        400
+      );
     }
+
+  } catch (error) {
+    console.error('❌ M-Pesa STK Push Error:');
+    
+    // If it's already an AppError, rethrow it
+    if (error instanceof AppError) {
+      throw error;
+    }
+
+    if (axios.isAxiosError(error)) {
+      const axiosError = error as AxiosError;
+      console.error('Status:', axiosError.response?.status);
+      console.error('Data:', JSON.stringify(axiosError.response?.data, null, 2));
+      console.error('Message:', axiosError.message);
+
+      // Handle specific M-Pesa errors
+      const responseData: any = axiosError.response?.data;
+
+      if (responseData?.errorMessage) {
+        throw new AppError(`M-Pesa Error: ${responseData.errorMessage}`, 400);
+      }
+
+      if (axiosError.response?.status === 400) {
+        throw new AppError(
+          'Invalid M-Pesa request. Check phone number and amount.',
+          400
+        );
+      }
+
+      if (axiosError.response?.status === 401) {
+        throw new AppError(
+          'M-Pesa authentication failed. Check credentials in .env',
+          500
+        );
+      }
+
+      if (axiosError.code === 'ECONNREFUSED') {
+        throw new AppError(
+          'Cannot connect to M-Pesa API. Check internet connection.',
+          500
+        );
+      }
+
+      if (axiosError.code === 'ETIMEDOUT') {
+        throw new AppError(
+          'M-Pesa request timeout. Please try again.',
+          500
+        );
+      }
+    }
+
+    // Generic error
+    throw new AppError(
+      'Failed to initiate M-Pesa payment. Please try again or contact support.',
+      500
+    );
+  }
+};
+
+/**
+ * Query STK Push Transaction Status
+ * 
+ * Checks the status of a previous STK Push request
+ * Useful for polling or checking failed transactions
+ * 
+ * @param checkoutRequestID The CheckoutRequestID from STK Push response
+ * @returns Transaction status
+ */
+export const queryStkPushStatus = async (
+  checkoutRequestID: string
+): Promise<any> => {
+  try {
+    validateMpesaConfig();
+
+    const accessToken = await getAccessToken();
+    const timestamp = getTimestamp();
+    const password = generatePassword(timestamp);
+
+    const payload = {
+      BusinessShortCode: MPESA_CONFIG.shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      CheckoutRequestID: checkoutRequestID,
+    };
+
+    const url = `${getBaseUrl()}/mpesa/stkpushquery/v1/query`;
+
+    const response = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 30000,
+    });
 
     return response.data;
 
   } catch (error) {
-    // Detailed logging for Axios errors
-    if (axios.isAxiosError(error)) {
-      console.error('STK Push API Error:', error.response?.data || error.message);
-      throw new AppError('Failed to communicate with M-Pesa API.', 500);
-    }
-    throw error;
+    console.error('Error querying STK Push status:', error);
+    throw new AppError('Failed to query payment status', 500);
   }
-}
+};

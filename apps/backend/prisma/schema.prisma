@@ -1,0 +1,181 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Ensure your MongoDB URI is correctly set in .env
+datasource db {
+  provider = "mongodb"
+  url      = env("MONGODB_URI")
+}
+
+// --------------------------------------------------
+// Enums
+// --------------------------------------------------
+
+// Enums remain correct for Prisma.
+
+enum UserRole {
+  CUSTOMER
+  STAFF
+  ADMIN
+}
+
+enum ProductCategory {
+  CLADS
+  SERVICES
+  ACCESSORIES
+}
+
+enum ServiceType {
+  WEBSITE_CREATION
+  FULLSTACK_DEVELOPMENT
+  MPESA_INTEGRATION
+  MOBILE_APP
+  CUSTOM_SOFTWARE
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  MPESA
+  CARD
+  CASH
+}
+
+// --------------------------------------------------
+// Models (Fixed for MongoDB Relations)
+// --------------------------------------------------
+
+model User {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  email             String    @unique
+  password          String?
+  name              String
+  role              UserRole  @default(CUSTOMER)
+  googleId          String?   @unique
+  avatar            String?
+  phone             String?
+  address           Address?  // Embedded document
+  isEmailVerified   Boolean   @default(false)
+  
+  // Relations: MongoDB uses explicit foreign keys on the referencing side.
+  // One-to-One: The Cart model holds the unique userId.
+  carts             Cart[]    // Changed to array because Cart model holds the relation key.
+  orders            Order[]
+  createdProducts   Product[] @relation("CreatedProducts")
+  
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@map("users")
+}
+
+// Embedded Document Type - This structure is correct.
+type Address {
+  street  String?
+  city    String?
+  state   String?
+  zipCode String?
+  country String? @default("Kenya")
+}
+
+model Product {
+  id              String          @id @default(auto()) @map("_id") @db.ObjectId
+  name            String
+  description     String
+  category        ProductCategory
+  serviceType     ServiceType?
+  price           Float
+  images          String[]
+  stock           Int
+  sizes           String[]?
+  colors          String[]?
+  isActive        Boolean         @default(true)
+  featured        Boolean         @default(false)
+  metadata        Json?
+  
+  // Relations
+  createdBy       User            @relation("CreatedProducts", fields: [createdById], references: [id])
+  createdById     String          @db.ObjectId // Foreign Key
+  
+  // Timestamps
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  @@map("products")
+}
+
+model Cart {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Relations: One-to-One relationship (User:Cart)
+  user              User      @relation(fields: [userId], references: [id])
+  userId            String    @unique @db.ObjectId // Foreign Key (Must be unique for 1:1)
+  
+  // CartItem is an embedded document type
+  // Prisma correctly handles this as an array of embedded objects.
+  items             CartItem[] 
+  
+  totalAmount       Float
+  
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@map("carts")
+}
+
+// Embedded Document Type - This structure is correct for nesting in Cart and Order.
+type CartItem {
+  // NOTE: This is NOT a model, so it can't be queried directly.
+  // It only exists inside Cart/Order documents.
+  productId         String    @db.ObjectId // Reference to Product ID
+  quantity          Int
+  size              String?
+  color             String?
+  price             Float
+}
+
+model Order {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  orderNumber       String    @unique
+  
+  // Relations
+  user              User      @relation(fields: [userId], references: [id])
+  userId            String    @db.ObjectId // Foreign Key
+  
+  // Embedded document type
+  items             CartItem[] 
+  totalAmount       Float
+  status            OrderStatus @default(PENDING)
+  paymentMethod     PaymentMethod
+  paymentStatus     String 
+  transactionId     String?
+  
+  // FIX: Added M-Pesa fields from your types/index.ts
+  mpesaCheckoutId   String?
+  mpesaReceiptNumber String?
+  
+  // Embedded document type
+  shippingAddress   Address 
+  notes             String?
+  trackingNumber    String?
+  
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deliveredAt       DateTime?
+  
+  @@map("orders")
+}
