@@ -6,4 +6,5 @@ nodeLinker: hoisted
 
 onlyBuiltDependencies:
   - '@prisma/engines'
+  - bcrypt
   - prisma
