@@ -7,6 +7,7 @@ import { UserRole } from '../../types'; // Re-use types
 import { AuthRequest } from '../../types'; // Extended request
 import { generateAuthToken, comparePassword, hashPassword } from './auth.utils'; // New utils for JWT/Bcrypt
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 
 const authRouter = Router();
 

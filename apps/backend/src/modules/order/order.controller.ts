@@ -1,10 +1,10 @@
 // src/controllers/order.controller.ts
 
 import { Response, Request } from 'express';
-import { OrderStatus } from '../types';
-import Order from '../models/Order.model';
-import Cart from '../models/Cart.model'; // Need Cart to clear it upon successful payment
-import { asyncHandler } from '../middleware/error.middleware'; 
+import { OrderStatus } from '../../types';
+import Order from './Order.model';
+import Cart from '../cart/Cart.model'; // Need Cart to clear it upon successful payment
+import { asyncHandler } from '../../middleware/error.middleware'; 
 
 // @desc    Receives the final payment status from M-Pesa API (Callback)
 // @route   POST /api/orders/callback

@@ -1,7 +1,7 @@
 import { Response } from 'express';
-import { AuthRequest, ProductCategory, ServiceType } from '../types';
-import Product from '../models/Product.model';
-import { asyncHandler } from '../middleware/error.middleware';
+import { AuthRequest, ProductCategory, ServiceType } from '../../types';
+import Product from './Product.model';
+import { asyncHandler } from '../../middleware/error.middleware';
 
 // @desc    Create new product
 // @route   POST /api/products

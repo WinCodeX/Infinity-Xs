@@ -1,10 +1,10 @@
 // src/controllers/auth.controller.ts
 
 import { Response } from 'express';
-import { AuthRequest } from '../types';
-import User from '../models/User.model';
-import { asyncHandler } from '../middleware/error.middleware';
-import { AppError } from '../middleware/error.middleware';
+import { AuthRequest } from '../../types';
+import User from '../user/User.model';
+import { asyncHandler } from '../../middleware/error.middleware';
+import { AppError } from '../../middleware/error.middleware';
 
 /**
  * @route   POST /api/auth/register

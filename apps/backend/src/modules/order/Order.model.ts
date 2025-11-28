@@ -8,7 +8,7 @@
  */
 
 import mongoose, { Schema, Model } from 'mongoose';
-import { IOrder, OrderStatus, PaymentMethod, ICartItem } from '../types';
+import { IOrder, OrderStatus, PaymentMethod, ICartItem } from '../../types';
 
 /**
  * Order Schema Definition

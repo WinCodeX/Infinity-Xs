@@ -8,7 +8,7 @@
  */
 
 import mongoose, { Schema, Model } from 'mongoose';
-import { IProduct, ProductCategory, ServiceType } from '../types';
+import { IProduct, ProductCategory, ServiceType } from '../../types';
 
 /**
  * Product Schema Definition

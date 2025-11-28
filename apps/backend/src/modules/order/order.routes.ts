@@ -1,7 +1,7 @@
 // src/routes/order.routes.ts
 
 import express from 'express';
-import { mpesaCallback } from '../controllers/order.controller';
+import { mpesaCallback } from './order.controller';
 
 const router = express.Router();
 
